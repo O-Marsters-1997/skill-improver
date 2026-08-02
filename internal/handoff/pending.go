@@ -176,7 +176,12 @@ func Prompt(u config.Updater, mode, skillPath, pending, archive string) string {
 			"These suggestions are observations about a document the skill produced, named by\n"+
 				"the \"file\" key on each one — not about the skill's own text. For each, infer which\n"+
 				"instruction in the skill at %s allowed it, and edit that SKILL.md:\n"+
-				"never the reviewed file.\n\n",
+				"never the reviewed file.\n\n"+
+				"Weigh them as one review, not as independent edits. Several observations often\n"+
+				"trace back to the same instruction, and one read on its own invites a fix the rest\n"+
+				"contradict. Where an observation traces back to no instruction, report it and\n"+
+				"leave the SKILL.md alone — an edit invented to cover it is a rule the skill never\n"+
+				"needed.\n\n",
 			skillPath)
 	}
 	fmt.Fprintf(&b, archiveInstruction, pending, archive)

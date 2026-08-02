@@ -169,9 +169,17 @@ func TestPromptTellsTheUpdaterWhatItIsLookingAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"produced", skillDir, "never the reviewed file"} {
-		if !strings.Contains(got.Prompt, want) {
-			t.Errorf("prompt does not mention %q:\n%s", want, got.Prompt)
+	// The #3 spike found the inference itself robust but the edit calibration fragile:
+	// a lone undiagnosed observation drew an invented rule that contradicted an earlier
+	// run. Both guards against that have to survive in the prompt.
+	want := []string{
+		"produced", skillDir, "never the reviewed file",
+		"as one review, not as independent edits",
+		"traces back to no instruction, report it",
+	}
+	for _, w := range want {
+		if !strings.Contains(got.Prompt, w) {
+			t.Errorf("prompt does not mention %q:\n%s", w, got.Prompt)
 		}
 	}
 }

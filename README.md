@@ -10,8 +10,8 @@ the payload at a *different* skill, so you can review something a skill **produc
 have the suggestions land on the instructions that produced it.
 
 What the triage asks for and which skill receives the payload are
-[configurable](#configuration); out of the box it is a priority and a category, and the
-prompt spells the work out rather than naming a skill.
+[configurable](#configuration); out of the box it is a priority, a category and a cause, and
+the prompt spells the work out rather than naming a skill.
 
 See [`docs/CONTEXT.md`](docs/CONTEXT.md) for the vocabulary (anchor, thread, quote, field,
 rev) and the reasoning behind the design;
@@ -42,7 +42,7 @@ just run
 
 ```
 reviewing /path/to/testdata/example-SKILL.md
-serving   http://localhost:8420
+serving   http://127.0.0.1:8420
 ```
 
 That serves the bundled fixture. To review a real skill — flags and the path both go through
@@ -50,10 +50,10 @@ That serves the bundled fixture. To review a real skill — flags and the path b
 
 ```
 just run ~/.claude/skills/my-skill/SKILL.md
-just run --addr :9000 ~/.claude/skills/my-skill/SKILL.md
+just run --addr 127.0.0.1:9000 ~/.claude/skills/my-skill/SKILL.md
 ```
 
-Open `http://localhost:8420` and try the workflow below against the fixture — it's a
+Open `http://127.0.0.1:8420` and try the workflow below against the fixture — it's a
 `SKILL.md` with headings, a fenced code block, a table and a blockquote, built specifically
 to exercise the anchoring.
 
@@ -106,7 +106,7 @@ through `just run`, or straight to the binary from `just build`.
 
 | Flag | Default | Description |
 | ---- | ------- | ----------- |
-| `--addr` | `:8420` | address to serve on |
+| `--addr` | `127.0.0.1:8420` | address to serve on. Loopback-only by default: the API rewrites the file under review and has no authentication, so `--addr :8420` hands that to anyone on the network |
 | `--out` | `.skill-review` | directory for handoff payloads |
 | `--author` | `$USER` env var, or `reviewer` if unset | name recorded against comments |
 | `--config` | *(see [Configuration](#configuration))* | config file to use |
@@ -152,6 +152,12 @@ default = "medium"     # must be one of values
 name    = "category"
 label   = "Category"
 values  = ["instructions", "tools", "examples", "error_handling", "structure", "references"]
+default = "instructions"
+
+[[field]]
+name    = "cause"
+label   = "Cause"
+values  = ["instructions", "execution"]
 default = "instructions"
 
 # Optional. Its name is read from the frontmatter and used in the handoff prompt and

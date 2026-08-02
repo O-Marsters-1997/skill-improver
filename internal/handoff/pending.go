@@ -87,7 +87,7 @@ func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, e
 	sortSuggestions(cfg, payload.Suggestions)
 
 	file := filepath.Join(outDir, PendingName)
-	archived := archivedIDs(outDir)
+	archived := ArchivedIDs(outDir)
 	payload.Suggestions = slices.DeleteFunc(payload.Suggestions, func(s Suggestion) bool {
 		return archived[s.ID]
 	})
@@ -196,10 +196,12 @@ func readPending(outDir string) pendingFile {
 	return p
 }
 
-// Every thread already moved into an archive file. One that will not decode is skipped
-// rather than fatal — but noisily, since ignoring it silently would let an already-applied
-// suggestion come back.
-func archivedIDs(outDir string) map[string]bool {
+// ArchivedIDs is every thread already moved into an archive file. One that will not decode
+// is skipped rather than fatal — but noisily, since ignoring it silently would let an
+// already-applied suggestion come back.
+//
+// Submit uses it to exclude, and the server to avoid minting an id it would exclude.
+func ArchivedIDs(outDir string) map[string]bool {
 	ids := map[string]bool{}
 	entries, err := filepath.Glob(filepath.Join(outDir, "*.json"))
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/O-Marsters-1997/improve-skills/internal/comments"
 	"github.com/O-Marsters-1997/improve-skills/internal/config"
 	"github.com/O-Marsters-1997/improve-skills/internal/handoff"
 )
@@ -453,6 +454,76 @@ func TestHandoffToleratesCorruptArchive(t *testing.T) {
 
 	if got := submit(t, s); len(got.Payload.Suggestions) != 1 {
 		t.Errorf("got %d suggestions; want the handoff to proceed", len(got.Payload.Suggestions))
+	}
+}
+
+// Hands out the scripted ids in order, then real ones. A collision is too rare to wait
+// for and too quiet to notice, so it has to be forced.
+func scriptedIDs(ids ...string) func() string {
+	return func() string {
+		if len(ids) == 0 {
+			return comments.NewID()
+		}
+		id := ids[0]
+		ids = ids[1:]
+		return id
+	}
+}
+
+// Submit deletes any suggestion whose id is archived, so a thread that draws an archived
+// id is never handed off and says nothing about it.
+func TestAnchorAvoidsArchivedIDs(t *testing.T) {
+	s, _ := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+	taken := submit(t, s).Payload.Suggestions[0].ID
+	archive(t, s)
+
+	// Only the archive holds the id now, so nothing in the document can catch it.
+	post(t, s, "/api/thread/delete", threadRequest{Rev: getDoc(t, s).Rev, ID: taken})
+
+	s.newID = scriptedIDs(taken)
+	comment(t, s, "Comments autosave", "say where they autosave to")
+
+	got := submit(t, s)
+	if len(got.Payload.Suggestions) != 1 {
+		t.Fatalf("the new thread never reached the payload: %+v", got.Payload.Suggestions)
+	}
+	if got.Payload.Suggestions[0].ID == taken {
+		t.Errorf("reused the archived id %q", taken)
+	}
+}
+
+func TestAnchorAvoidsIDsInTheDocument(t *testing.T) {
+	s, _ := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+	taken := getDoc(t, s).Threads[0].ID
+
+	s.newID = scriptedIDs(taken)
+	comment(t, s, "Comments autosave", "say where they autosave to")
+
+	threads := getDoc(t, s).Threads
+	if len(threads) != 2 {
+		t.Fatalf("got %d threads; want both", len(threads))
+	}
+	if threads[0].ID == threads[1].ID {
+		t.Errorf("both threads got id %q", taken)
+	}
+}
+
+// An id source that can never produce a free id has to fail the request rather than spin.
+func TestAnchorGivesUpOnAnIDSourceThatOnlyCollides(t *testing.T) {
+	s, _ := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+	taken := getDoc(t, s).Threads[0].ID
+
+	s.newID = func() string { return taken }
+	start, end := offsetOf(t, string(mustRead(t, s.Path())), "Comments autosave")
+	w := post(t, s, "/api/anchor", anchorRequest{
+		Rev: getDoc(t, s).Rev, Start: start, End: end, Quote: "Comments autosave", Body: "x",
+	})
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d; want 500 rather than a silently dropped thread", w.Code)
 	}
 }
 

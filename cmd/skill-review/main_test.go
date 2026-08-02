@@ -27,7 +27,7 @@ func TestServeDispatch(t *testing.T) {
 			name:   "bare path",
 			args:   []string{"skill-review", "SKILL.md"},
 			path:   "SKILL.md",
-			addr:   ":8420",
+			addr:   "127.0.0.1:8420",
 			out:    ".skill-review",
 			author: "olly",
 		},
@@ -43,7 +43,7 @@ func TestServeDispatch(t *testing.T) {
 			name:   "explicit serve",
 			args:   []string{"skill-review", "serve", "SKILL.md"},
 			path:   "SKILL.md",
-			addr:   ":8420",
+			addr:   "127.0.0.1:8420",
 			out:    ".skill-review",
 			author: "olly",
 		},
@@ -60,7 +60,7 @@ func TestServeDispatch(t *testing.T) {
 			args:   []string{"skill-review", "--skill", "/skills/ideate", "report.md"},
 			path:   "report.md",
 			skill:  "/skills/ideate",
-			addr:   ":8420",
+			addr:   "127.0.0.1:8420",
 			out:    ".skill-review",
 			author: "olly",
 		},
@@ -83,6 +83,28 @@ func TestServeDispatch(t *testing.T) {
 			}
 			if got.path != tt.path || got.skill != tt.skill || got.addr != tt.addr || got.out != tt.out || got.author != tt.author {
 				t.Errorf("got %+v, want path=%q skill=%q addr=%q out=%q author=%q", got, tt.path, tt.skill, tt.addr, tt.out, tt.author)
+			}
+		})
+	}
+}
+
+// The logged URL is the only address the reviewer ever sees, so a wildcard listener has to
+// be reported as something a browser can actually open.
+func TestBrowsableURL(t *testing.T) {
+	tests := []struct{ addr, want string }{
+		{"127.0.0.1:8420", "http://127.0.0.1:8420"},
+		{":9000", "http://localhost:9000"},
+		{"0.0.0.0:8420", "http://localhost:8420"},
+		{"[::]:8420", "http://localhost:8420"},
+		{"[::1]:8420", "http://[::1]:8420"},
+		{"example.test:80", "http://example.test:80"},
+		{"nonsense", "http://nonsense"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			if got := browsableURL(tt.addr); got != tt.want {
+				t.Errorf("browsableURL(%q) = %q, want %q", tt.addr, got, tt.want)
 			}
 		})
 	}

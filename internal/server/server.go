@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -41,6 +42,7 @@ type Server struct {
 	author    string
 	cfg       *config.Config
 	mux       *http.ServeMux
+	newID     func() string
 	writeFile sync.Mutex // ponytail: one lock for the whole file; this serves one reviewer
 }
 
@@ -65,7 +67,7 @@ func New(cfg *config.Config, path, skillPath, outDir, author string) (*Server, e
 		return nil, fmt.Errorf("server: resolve %s: %w", outDir, err)
 	}
 
-	s := &Server{path: absolute, skill: absoluteSkill, outDir: out, author: author, cfg: cfg, mux: http.NewServeMux()}
+	s := &Server{path: absolute, skill: absoluteSkill, outDir: out, author: author, cfg: cfg, mux: http.NewServeMux(), newID: comments.NewID}
 
 	assets, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -126,13 +128,16 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mutate(w, req.Rev, func(src []byte) ([]byte, error) {
-		id := comments.NewID()
+		id, err := s.freshID(src)
+		if err != nil {
+			return nil, err
+		}
 		out, anchored, err := comments.Anchor(src, req.Start, req.End, req.Quote, id)
 		if err != nil {
 			return nil, err
 		}
-		// Priority and category are left unset: they are comparative judgements,
-		// made on the thread cards once there is something to compare against.
+		// The triage fields are left unset: they are comparative judgements, made
+		// on the thread cards once there is something to compare against.
 		return comments.Upsert(out, comments.Thread{
 			ID:       id,
 			Quote:    anchored,
@@ -140,6 +145,21 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 			Comments: []comments.Comment{s.newComment("c1", "", req.Body)},
 		})
 	})
+}
+
+// Ids are random, and handoff.Submit drops any suggestion whose id is already archived, so
+// a redrawn id would make the new thread vanish from the payload without a word. Retrying
+// is invisible to the reviewer; the attempt limit only stops a broken id source spinning
+// the request forever, since 36^6 ids against a handful in use never needs a second draw.
+func (s *Server) freshID(src []byte) (string, error) {
+	used := handoff.ArchivedIDs(s.outDir)
+	maps.Copy(used, comments.IDs(src))
+	for range 10 {
+		if id := s.newID(); !used[id] {
+			return id, nil
+		}
+	}
+	return "", errNoFreshID
 }
 
 type threadRequest struct {
@@ -358,7 +378,10 @@ func decode(r *http.Request, into any) error {
 	return nil
 }
 
-var errBadRequest = errors.New("malformed request")
+var (
+	errBadRequest = errors.New("malformed request")
+	errNoFreshID  = errors.New("server: every id offered is already in use")
+)
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")

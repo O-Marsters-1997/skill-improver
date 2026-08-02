@@ -114,14 +114,14 @@ func TestAnchorWritesToDisk(t *testing.T) {
 
 	d := decodeDoc(t, post(t, s, "/api/anchor", anchorRequest{
 		Rev: getDoc(t, s).Rev, Start: start, End: end, Quote: "never push",
-		Body: "say why this matters", Priority: "high", Category: "instructions",
+		Body: "say why this matters",
 	}))
 
 	if len(d.Threads) != 1 {
 		t.Fatalf("got %d threads; want 1", len(d.Threads))
 	}
 	thread := d.Threads[0]
-	if thread.Quote != "never push" || thread.Priority != "high" {
+	if thread.Quote != "never push" || thread.Priority != "" {
 		t.Errorf("thread = %+v", thread)
 	}
 	if len(thread.Comments) != 1 || thread.Comments[0].Author != "olly" || thread.Comments[0].TS == "" {
@@ -227,44 +227,168 @@ func TestThreadLifecycle(t *testing.T) {
 	})
 }
 
-func TestHandoff(t *testing.T) {
-	s, _ := newTestServer(t)
-	start, end := offsetOf(t, fixture, "never push")
-	post(t, s, "/api/anchor", anchorRequest{
-		Rev: getDoc(t, s).Rev, Start: start, End: end, Quote: "never push",
-		Body: "explain the failure mode", Priority: "high", Category: "instructions",
+func comment(t *testing.T, s *Server, passage, body string) {
+	t.Helper()
+
+	start, end := offsetOf(t, string(mustRead(t, s.Path())), passage)
+	w := post(t, s, "/api/anchor", anchorRequest{
+		Rev: getDoc(t, s).Rev, Start: start, End: end, Quote: passage, Body: body,
 	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("anchor %q = %d: %s", passage, w.Code, w.Body)
+	}
+}
+
+func submit(t *testing.T, s *Server) handoffResponse {
+	t.Helper()
 
 	w := post(t, s, "/api/handoff", struct{}{})
 	if w.Code != http.StatusOK {
-		t.Fatalf("status %d: %s", w.Code, w.Body)
+		t.Fatalf("handoff = %d: %s", w.Code, w.Body)
 	}
 	var got handoffResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
+		t.Fatalf("decode handoff: %v", err)
 	}
+	return got
+}
 
-	if len(got.Payload.Suggestions) != 1 {
-		t.Fatalf("got %d suggestions; want 1", len(got.Payload.Suggestions))
+func readPendingFile(t *testing.T, s *Server) pendingFile {
+	t.Helper()
+
+	var p pendingFile
+	if err := json.Unmarshal(mustRead(t, filepath.Join(s.outDir, pendingName)), &p); err != nil {
+		t.Fatalf("decode pending: %v", err)
+	}
+	return p
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return body
+}
+
+// Stands in for the mv the reviewer runs once skill-updater has applied the payload.
+func archive(t *testing.T, s *Server) {
+	t.Helper()
+
+	if err := os.Rename(filepath.Join(s.outDir, pendingName), readPendingFile(t, s).Archive); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+}
+
+func TestHandoffWritesPending(t *testing.T) {
+	s, _ := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+
+	got := submit(t, s)
+	if len(got.Payload.Suggestions) != 1 || !got.Changed {
+		t.Fatalf("got %d suggestions, changed=%v", len(got.Payload.Suggestions), got.Changed)
+	}
+	// A thread never triaged in the sidebar still has to reach skill-updater with a
+	// priority and category it accepts.
+	if s := got.Payload.Suggestions[0]; s.ID == "" || s.Priority != "medium" || s.Category != "instructions" || s.ExpectedImpact == "" {
+		t.Errorf("untriaged suggestion = %+v", s)
 	}
 	if got.Payload.SkillName != "example-skill" || got.Payload.SkillPath != s.Path() {
 		t.Errorf("payload header = %+v", got.Payload)
 	}
-	if !strings.Contains(got.Prompt, got.File) {
-		t.Errorf("prompt %q does not name the file %q", got.Prompt, got.File)
+	if got.File != filepath.Join(s.outDir, pendingName) {
+		t.Errorf("wrote %q; want the flat pending file under %q", got.File, s.outDir)
 	}
 
-	written, err := os.ReadFile(got.File)
+	onDisk := readPendingFile(t, s)
+	if len(onDisk.Suggestions) != 1 || onDisk.SkillName != "example-skill" {
+		t.Errorf("pending is not the skill-updater shape: %+v", onDisk)
+	}
+	// The prompt has to outlive the browser toast that used to be its only home, and
+	// has to carry the archive step, or the next submit repeats itself.
+	if onDisk.Prompt != got.Prompt || !strings.Contains(got.Prompt, "mv "+got.File) {
+		t.Errorf("prompt on disk = %q; response = %q", onDisk.Prompt, got.Prompt)
+	}
+	if filepath.Dir(onDisk.Archive) != s.outDir || !strings.HasPrefix(filepath.Base(onDisk.Archive), "handoff-example-skill-") {
+		t.Errorf("archive target = %q", onDisk.Archive)
+	}
+}
+
+func TestHandoffSkipsArchived(t *testing.T) {
+	s, _ := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+	first := submit(t, s)
+	archive(t, s)
+
+	empty := submit(t, s)
+	if len(empty.Payload.Suggestions) != 0 {
+		t.Fatalf("archived thread came back: %+v", empty.Payload.Suggestions)
+	}
+	if _, err := os.Stat(filepath.Join(s.outDir, pendingName)); !os.IsNotExist(err) {
+		t.Errorf("pending file survived with nothing pending: %v", err)
+	}
+
+	comment(t, s, "Comments autosave", "say where they autosave to")
+	second := submit(t, s)
+	if len(second.Payload.Suggestions) != 1 {
+		t.Fatalf("got %d suggestions; want only the new one", len(second.Payload.Suggestions))
+	}
+	if second.Payload.Suggestions[0].ID == first.Payload.Suggestions[0].ID {
+		t.Errorf("the archived thread was handed off a second time")
+	}
+}
+
+func TestHandoffReflectsRetriage(t *testing.T) {
+	s, _ := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+	id := submit(t, s).Payload.Suggestions[0].ID
+
+	post(t, s, "/api/thread", threadRequest{Rev: getDoc(t, s).Rev, ID: id, Priority: "high"})
+
+	got := submit(t, s)
+	if got.Payload.Suggestions[0].Priority != "high" || !got.Changed {
+		t.Errorf("retriage did not reach pending: %+v changed=%v", got.Payload.Suggestions[0], got.Changed)
+	}
+}
+
+func TestHandoffSkipsUnchangedWrite(t *testing.T) {
+	s, _ := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+	submit(t, s)
+
+	before, err := os.Stat(filepath.Join(s.outDir, pendingName))
 	if err != nil {
-		t.Fatalf("payload file: %v", err)
-	}
-	if !bytes.Contains(written, []byte("improvement_suggestions")) {
-		t.Errorf("payload file is not the skill-updater shape:\n%s", written)
+		t.Fatalf("stat pending: %v", err)
 	}
 
-	// Submit is a pure function of what is already saved, so clicking twice is safe.
-	if again := post(t, s, "/api/handoff", struct{}{}); again.Code != http.StatusOK {
-		t.Errorf("second submit = %d; want it to be repeatable", again.Code)
+	got := submit(t, s)
+	if got.Changed {
+		t.Errorf("second submit reported a change with nothing edited")
+	}
+	after, err := os.Stat(filepath.Join(s.outDir, pendingName))
+	if err != nil {
+		t.Fatalf("stat pending: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("pending was rewritten with nothing new")
+	}
+}
+
+// A stray file in the output directory must not take the handoff down with it.
+func TestHandoffToleratesCorruptArchive(t *testing.T) {
+	s, _ := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+	if err := os.MkdirAll(s.outDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(s.outDir, "handoff-broken.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write corrupt archive: %v", err)
+	}
+
+	if got := submit(t, s); len(got.Payload.Suggestions) != 1 {
+		t.Errorf("got %d suggestions; want the handoff to proceed", len(got.Payload.Suggestions))
 	}
 }
 

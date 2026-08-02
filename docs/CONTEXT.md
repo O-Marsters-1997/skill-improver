@@ -59,9 +59,19 @@ last read; a mismatch means the file changed underneath it, so the write is refu
 409 and the page reloads. This is what stops an edit made in the editor from being clobbered.
 
 **Suggestion** and **payload** — `skill-updater`'s vocabulary, not ours. A thread becomes one
-suggestion with a `priority`, a `category`, the suggestion text and an `expected_impact`;
-the payload is the set of them plus the skill's name and path. Priority and category are
-picked in the sidebar while commenting, so the payload is complete before Submit is clicked.
+suggestion carrying the thread's `id`, a `priority`, a `category`, the suggestion text and an
+`expected_impact`; the payload is the set of them plus the skill's name and path. The
+composer asks for none of that: priority and category are set on the thread cards, where
+every other thread is in view, because ranking one comment against nothing is not a
+judgement anyone can make. Untouched threads default to `medium`/`instructions`.
+
+**Pending** and **archive** — `.skill-review/pending.json` holds every open thread that has
+not yet been handed off. It is regenerated on each Submit, so a retriage, a reply or a
+deletion lands in it. The prompt carries a `mv` that moves it to
+`handoff-<skill>-<timestamp>.json`; from then on those thread ids are **archived**, and
+Submit excludes them for good. That boundary is the whole point — without it a second Submit
+re-proposes work `skill-updater` has already applied. A reply to an archived thread stays a
+local record and is never handed off again.
 
 ## Shape
 

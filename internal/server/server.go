@@ -7,14 +7,17 @@
 package server
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,7 +48,14 @@ func New(path, outDir, author string) (*Server, error) {
 		return nil, fmt.Errorf("server: %w", err)
 	}
 
-	s := &Server{path: absolute, outDir: outDir, author: author, mux: http.NewServeMux()}
+	// -out is relative by default, so it lands in the directory the binary was run
+	// from. Resolving it once here keeps the handoff prompt pasteable anywhere.
+	out, err := filepath.Abs(outDir)
+	if err != nil {
+		return nil, fmt.Errorf("server: resolve %s: %w", outDir, err)
+	}
+
+	s := &Server{path: absolute, outDir: out, author: author, mux: http.NewServeMux()}
 
 	assets, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -85,14 +95,11 @@ func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 type anchorRequest struct {
-	Rev      string `json:"rev"`
-	Start    int    `json:"start"`
-	End      int    `json:"end"`
-	Quote    string `json:"quote"`
-	Body     string `json:"body"`
-	Priority string `json:"priority"`
-	Category string `json:"category"`
-	Impact   string `json:"impact"`
+	Rev   string `json:"rev"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+	Quote string `json:"quote"`
+	Body  string `json:"body"`
 }
 
 func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
@@ -108,14 +115,13 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
+		// Priority and category are left unset: they are comparative judgements,
+		// made on the thread cards once there is something to compare against.
 		return comments.Upsert(out, comments.Thread{
 			ID:       id,
 			Quote:    anchored,
 			Status:   "open",
 			Comments: []comments.Comment{s.newComment("c1", "", req.Body)},
-			Priority: req.Priority,
-			Category: req.Category,
-			Impact:   req.Impact,
 		})
 	})
 }
@@ -175,11 +181,25 @@ func (s *Server) handleThreadDelete(w http.ResponseWriter, r *http.Request) {
 type handoffResponse struct {
 	File    string          `json:"file"`
 	Prompt  string          `json:"prompt"`
+	Changed bool            `json:"changed"`
 	Payload handoff.Payload `json:"payload"`
 }
 
-// Nothing is pushed anywhere: click Submit twice and the second click is as good as
-// the first.
+// The embedded payload flattens, so the file stays a superset of what skill-updater
+// reads: the prompt and its archive target ride along rather than living only in a
+// browser toast.
+type pendingFile struct {
+	handoff.Payload
+	Prompt  string `json:"prompt"`
+	Archive string `json:"archive"`
+}
+
+const pendingName = "pending.json"
+
+// Pending is regenerated from the document every time rather than appended to, so a
+// thread that was retriaged, replied to, resolved or deleted since the last submit is
+// reflected. Only threads already moved to an archive file are excluded, which is what
+// stops skill-updater being handed the same suggestion twice.
 func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	s.writeFile.Lock()
 	defer s.writeFile.Unlock()
@@ -195,29 +215,97 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := os.MkdirAll(s.outDir, 0o755); err != nil {
+		writeError(w, fmt.Errorf("server: create %s: %w", s.outDir, err))
+		return
+	}
+
+	file := filepath.Join(s.outDir, pendingName)
+	archived := s.archivedIDs()
 	payload := handoff.Build(threads, handoff.SkillName(src), s.path)
-	body, err := json.MarshalIndent(payload, "", "  ")
+	payload.Suggestions = slices.DeleteFunc(payload.Suggestions, func(sug handoff.Suggestion) bool {
+		return archived[sug.ID]
+	})
+
+	if len(payload.Suggestions) == 0 {
+		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
+			writeError(w, fmt.Errorf("server: remove %s: %w", file, err))
+			return
+		}
+		writeJSON(w, http.StatusOK, handoffResponse{Payload: payload})
+		return
+	}
+
+	// Reusing the archive name already recorded keeps a prompt copied earlier valid,
+	// and lets an unchanged pending file compare equal.
+	archive := s.readPending().Archive
+	if archive == "" {
+		archive = filepath.Join(s.outDir, fmt.Sprintf("handoff-%s-%s.json",
+			or(payload.SkillName, "skill"), time.Now().UTC().Format("20060102T150405Z")))
+	}
+	prompt := fmt.Sprintf(
+		"Use skill-updater with the payload in %s\n\n"+
+			"Once applied, archive it so these suggestions are not handed off again:\nmv %s %s",
+		file, file, archive)
+
+	body, err := json.MarshalIndent(pendingFile{Payload: payload, Prompt: prompt, Archive: archive}, "", "  ")
 	if err != nil {
 		writeError(w, fmt.Errorf("server: encode payload: %w", err))
 		return
 	}
 
-	if err := os.MkdirAll(s.outDir, 0o755); err != nil {
-		writeError(w, fmt.Errorf("server: create %s: %w", s.outDir, err))
-		return
+	changed := true
+	if existing, err := os.ReadFile(file); err == nil {
+		changed = !bytes.Equal(existing, body)
 	}
-	name := fmt.Sprintf("handoff-%s-%s.json", or(payload.SkillName, "skill"), time.Now().UTC().Format("20060102T150405Z"))
-	file := filepath.Join(s.outDir, name)
-	if err := os.WriteFile(file, body, 0o644); err != nil {
-		writeError(w, fmt.Errorf("server: write %s: %w", file, err))
-		return
+	if changed {
+		if err := os.WriteFile(file, body, 0o644); err != nil {
+			writeError(w, fmt.Errorf("server: write %s: %w", file, err))
+			return
+		}
+		// The terminal is the one surface a failed clipboard write cannot take away.
+		log.Printf("handoff: %s", prompt)
 	}
 
-	writeJSON(w, http.StatusOK, handoffResponse{
-		File:    file,
-		Prompt:  fmt.Sprintf("Use skill-updater with the payload in %s", file),
-		Payload: payload,
-	})
+	writeJSON(w, http.StatusOK, handoffResponse{File: file, Prompt: prompt, Changed: changed, Payload: payload})
+}
+
+func (s *Server) readPending() pendingFile {
+	var p pendingFile
+	if body, err := os.ReadFile(filepath.Join(s.outDir, pendingName)); err == nil {
+		_ = json.Unmarshal(body, &p)
+	}
+	return p
+}
+
+// Every thread already moved into an archive file. One that will not decode is skipped
+// rather than fatal — but noisily, since ignoring it silently would let an
+// already-applied suggestion come back.
+func (s *Server) archivedIDs() map[string]bool {
+	ids := map[string]bool{}
+	entries, err := filepath.Glob(filepath.Join(s.outDir, "*.json"))
+	if err != nil {
+		log.Printf("handoff: cannot list %s: %v", s.outDir, err)
+		return ids
+	}
+	for _, entry := range entries {
+		if filepath.Base(entry) == pendingName {
+			continue
+		}
+		var payload handoff.Payload
+		body, err := os.ReadFile(entry)
+		if err == nil {
+			err = json.Unmarshal(body, &payload)
+		}
+		if err != nil {
+			log.Printf("handoff: skipping %s: %v", entry, err)
+			continue
+		}
+		for _, suggestion := range payload.Suggestions {
+			ids[suggestion.ID] = true
+		}
+	}
+	return ids
 }
 
 // The write is refused if the file changed since the client last read it.

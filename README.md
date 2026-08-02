@@ -49,20 +49,26 @@ to exercise the anchoring.
 
 ## Using the UI
 
-1. **Select text** in the rendered document. Releasing the mouse (or Shift+arrow keys) opens
-   a comment composer anchored to that passage.
-2. **Comment** — write the body, pick a **priority** (`high`/`medium`/`low`) and **category**
-   (`instructions`/`tools`/`examples`/`error_handling`/`structure`/`references`), and
-   optionally an **expected impact**. Save writes the comment into the file immediately.
+1. **Select text** in the rendered document. A small **💬 Comment** action appears next to
+   the selection — selecting is never hijacked, so you can read, copy and re-select freely.
+   Click the action (or press Escape / click away to dismiss it) to open a composer anchored
+   to that passage.
+2. **Comment** — write the body and save. That's the whole form: triage is a comparative
+   judgement, so it happens later, in the sidebar, once there is something to compare
+   against. Save writes the comment into the file immediately.
 3. Each comment becomes a **thread** in the sidebar, anchored to its highlighted passage in
    the document. From a thread card you can:
    - **Reply** — add another comment to the same thread.
    - **Resolve / Reopen** — toggle status; resolved threads are excluded from the handoff.
    - **Delete** — remove the whole thread and its anchor markers.
-   - Change **Priority**/**Category** inline at any time.
-4. **Submit all to skill-updater** (top right) writes every open thread with at least one
-   live comment to a handoff JSON file and copies a prompt to the clipboard. Nothing is
-   pushed anywhere else, so clicking it twice is harmless.
+   - Set **Priority**/**Category** — the triage step, with every other thread in view.
+     Untouched threads default to `medium`/`instructions`.
+4. **Submit all to skill-updater** (top right) collects every open thread that hasn't already
+   been handed off into `.skill-review/pending.json`, and shows the prompt in a panel that
+   stays until you close it — with a **Copy prompt** button, in case the automatic clipboard
+   write was refused. Nothing is pushed anywhere, so clicking it twice is harmless: the
+   second click reports that nothing is new. Paste the prompt to Claude, and **run the `mv`
+   it gives you** once the suggestions are applied — see [The handoff step](#the-handoff-step).
 
 If the file changes on disk while you're reviewing (e.g. someone edits it in another editor),
 the next write is refused with a conflict and the page reloads — no changes are lost, you
@@ -81,7 +87,7 @@ Pass them through `just run`, or straight to the binary from `just build`.
 | Flag       | Default                                  | Description                        |
 | ---------- | ----------------------------------------- | ----------------------------------- |
 | `-addr`    | `:8420`                                   | address to serve on                 |
-| `-out`     | `~/.claude/skill-review`                  | directory for handoff payloads      |
+| `-out`     | `.skill-review`                           | directory for handoff payloads      |
 | `-author`  | `$USER` env var, or `reviewer` if unset   | name recorded against comments      |
 
 <!-- END AUTO-GENERATED -->
@@ -99,23 +105,53 @@ file in version control:
 This is the `mc` marker format (see `internal/comments/comments.go`); other tooling that
 understands it can read the same file.
 
-Handoff payloads are written to `-out` (`~/.claude/skill-review` by default) as
-`handoff-<skill-name>-<UTC timestamp>.json`, one file per Submit click.
+Handoff payloads are written to `-out`. The default `.skill-review` is **relative**, so they
+land in the directory you ran the binary from — next to the work, not buried in `$HOME`. Add
+`.skill-review/` to your `.gitignore` if you'd rather not commit them.
+
+Two kinds of file live there:
+
+- **`pending.json`** — everything open and not yet handed off. There is only ever one, and
+  Submit rewrites it in place.
+- **`handoff-<skill-name>-<UTC timestamp>.json`** — an archive of one handoff that has been
+  applied. Submit reads these to know which threads are done.
 
 ## The handoff step
 
-Clicking **Submit all to skill-updater** builds a payload from every open thread that still
-has at least one comment: `skill_name`, `skill_path`, and an `improvement_suggestions` list,
-each with `priority`, `category`, `suggestion` (the comment thread text, with the anchored
-quote appended) and `expected_impact`, sorted high → medium → low. It's written to a file in
-`-out` and the response also gives you the exact line to paste to Claude:
+Clicking **Submit all to skill-updater** writes `pending.json`: `skill_name`, `skill_path`,
+and an `improvement_suggestions` list, each with the thread's `id`, a `priority`, a
+`category`, `suggestion` (the comment thread text, with the anchored quote appended) and
+`expected_impact`, sorted high → medium → low. `expected_impact` is synthesised from the
+anchored quote — the UI never asks for it, because `skill-updater` derives that kind of
+framing better than a text box collects it.
+
+The prompt you get back has two parts:
 
 ```
-Use skill-updater with the payload in /path/to/handoff-<skill>-<timestamp>.json
+Use skill-updater with the payload in /proj/.skill-review/pending.json
+
+Once applied, archive it so these suggestions are not handed off again:
+mv /proj/.skill-review/pending.json /proj/.skill-review/handoff-<skill>-<timestamp>.json
 ```
 
-That line is copied to your clipboard automatically; paste it to Claude to run
-`skill-updater` against the reviewed suggestions.
+**The `mv` is the important half.** Until you run it, those threads stay pending; once you
+do, their ids are archived and Submit will never hand them to `skill-updater` again. Without
+that boundary, a second review session re-proposes everything the first one already applied.
+
+Everything else follows from it:
+
+- Pending is **regenerated** on every Submit, not appended to, so retriaging a thread,
+  replying to it, resolving it or deleting it is reflected next time you click.
+- A Submit that changes nothing doesn't rewrite the file, and the panel says so.
+- Replying to a thread that has already been archived keeps the reply as a local record —
+  it is not handed off a second time. Start a new thread if you want it acted on.
+- With every open thread archived, Submit reports nothing to hand off and removes
+  `pending.json`.
+
+The prompt is kept in three places so it can't be lost: the panel in the UI (which waits to
+be dismissed), a `prompt` field in `pending.json` itself, and a line printed to the terminal
+running the server. That file is therefore a superset of what `skill-updater` reads —
+`skill_name`, `skill_path` and `improvement_suggestions` are still at the top level.
 
 ## Development
 

@@ -26,40 +26,28 @@
             placeholder="What should change, and why?"></textarea>
 
           <div class="row">
-            <span>
-              <label for="composer-priority">Priority</label>
-              <select id="composer-priority">
-                <option value="high">high</option>
-                <option value="medium" selected>medium</option>
-                <option value="low">low</option>
-              </select>
-            </span>
-            <span>
-              <label for="composer-category">Category</label>
-              <select id="composer-category">
-                <option value="instructions" selected>instructions</option>
-                <option value="tools">tools</option>
-                <option value="examples">examples</option>
-                <option value="error_handling">error_handling</option>
-                <option value="structure">structure</option>
-                <option value="references">references</option>
-              </select>
-            </span>
-          </div>
-
-          <label for="composer-impact">Expected impact <span class="hint">optional</span></label>
-          <input id="composer-impact" type="text" placeholder="What gets better if this lands" />
-
-          <div class="row">
             <button type="submit">Save comment</button>
             <button type="button" id="composer-cancel" class="quiet">Cancel</button>
           </div>
         </form>
 
-        <p id="empty" class="hint">Highlight a passage in the document to comment on it.</p>
+        <p id="empty" class="hint">Highlight a passage in the document, then choose Comment.</p>
         <div id="threads"></div>
       </aside>
     </main>
+
+    <div id="selection-menu" role="toolbar" aria-label="Selection actions" hidden>
+      <button type="button" id="selection-comment" aria-label="Comment on selection">💬 Comment</button>
+    </div>
+
+    <div id="handoff" role="status" aria-live="polite" hidden>
+      <p id="handoff-summary"></p>
+      <pre id="handoff-prompt"></pre>
+      <div class="row">
+        <button type="button" id="handoff-copy">Copy prompt</button>
+        <button type="button" id="handoff-close" class="quiet">Close</button>
+      </div>
+    </div>
 
     <div id="toast" role="status" aria-live="polite" hidden></div>
     <script src="app.js"></script>

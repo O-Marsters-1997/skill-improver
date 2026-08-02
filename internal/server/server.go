@@ -166,7 +166,7 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		out, anchored, err := comments.Anchor(src, req.Start, req.End, req.Quote, id)
+		out, anchored, err := comments.Anchor(src, req.Start, req.End, req.Quote, id, s.format())
 		if err != nil {
 			return nil, err
 		}
@@ -316,8 +316,24 @@ func (s *Server) mutate(w http.ResponseWriter, rev string, fn func([]byte) ([]by
 	s.respond(w, out, current)
 }
 
+// The extension picks both the renderer and the anchoring rules, from one place, so the
+// two can never disagree about what syntax the file is written in.
+func (s *Server) format() comments.Format {
+	switch strings.ToLower(filepath.Ext(s.path)) {
+	case ".html", ".htm":
+		return comments.HTML
+	default:
+		return comments.Markdown
+	}
+}
+
 func (s *Server) respond(w http.ResponseWriter, src []byte, rev string) {
-	html, err := render.HTML(src)
+	renderDoc := render.HTML
+	if s.format() == comments.HTML {
+		renderDoc = render.HTMLDoc
+	}
+
+	html, err := renderDoc(src)
 	if err != nil {
 		writeError(w, err)
 		return

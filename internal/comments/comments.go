@@ -135,6 +135,17 @@ func (t *Thread) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Format is the syntax of the file the markers are being written into. Everything about
+// the mc format is the same either way; only the rules for where a marker may be placed
+// differ, because a fenced code block is Markdown's idea and backticks in an HTML file
+// are ordinary text.
+type Format int
+
+const (
+	Markdown Format = iota
+	HTML
+)
+
 var (
 	markerPattern = regexp.MustCompile(`<!--mc:(/?)a:([a-z0-9]{1,12})-->`)
 	threadPattern = regexp.MustCompile(`(?m)^<!--mc:t (.*)-->[ \t]*$`)
@@ -165,7 +176,7 @@ func Threads(src []byte) ([]Thread, error) {
 // a selection spanning several rendered runs ("the **lazy** fix" reads as "the lazy
 // fix") can never equal the source slice, and staleness is already caught upstream
 // by the revision check.
-func Anchor(src []byte, start, end int, quote, id string) ([]byte, string, error) {
+func Anchor(src []byte, start, end int, quote, id string, format Format) ([]byte, string, error) {
 	if !validID(id) {
 		return nil, "", ErrBadID
 	}
@@ -177,7 +188,11 @@ func Anchor(src []byte, start, end int, quote, id string) ([]byte, string, error
 	}
 
 	start, end = snap(src, start, end, quote)
-	start, end, block := expandFences(src, start, end)
+
+	block := false
+	if format == Markdown {
+		start, end, block = expandFences(src, start, end)
+	}
 
 	if i := bytes.Index(src, []byte(threadsBegin)); i >= 0 && end > i {
 		return nil, "", ErrInThreads

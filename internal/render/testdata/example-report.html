@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Coverage report</title>
+  <link rel="stylesheet" href="report.css">
+  <style>body { color: red }</style>
+</head>
+<body onload="boot()">
+  <header>
+    <h1 class="title">Coverage report</h1>
+    <p>Generated for <a href="https://example.com/repo" title="the repo">example/repo</a>.</p>
+  </header>
+
+  <main>
+    <section id="summary">
+      <h2>Summary</h2>
+      <table>
+        <thead>
+          <tr><th>Package</th><th colspan="2">Statements</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>internal/render</td><td>412</td><td>94&nbsp;%</td></tr>
+          <tr><td>internal/comments</td><td>288</td><td>91&nbsp;%</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="notes">
+      <h2>Notes</h2>
+      <ul>
+        <li>Guards on <code>a &lt; b</code> are untested.</li>
+        <li>The <strong>anchor</strong> path is covered end to end.</li>
+      </ul>
+      <blockquote>Anything not measured is assumed broken.</blockquote>
+      <pre>
+  go test ./... -cover
+  go test ./internal/render -fuzz FuzzHTMLOffsets
+</pre>
+      <p>See the <img src="/badge.svg" alt="coverage badge"> for the headline number.</p>
+      <iframe src="https://example.com/embed"></iframe>
+      <form action="/subscribe"><input name="email"><button>Subscribe</button></form>
+    </section>
+  </main>
+
+  <footer><small>Built by the coverage skill.</small></footer>
+  <script src="report.js"></script>
+  <script>console.log("boot")</script>
+</body>
+</html>

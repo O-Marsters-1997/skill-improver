@@ -9,7 +9,7 @@ fields and the updater skill come from a TOML file, and the built-in defaults ar
 tool hardcoded before it had one.
 
 ```
-skill-review path/to/SKILL.md      # serves http://localhost:8420
+skill-review path/to/SKILL.md      # serves http://127.0.0.1:8420
 skill-review config init           # write the defaults out to edit
 go test ./...
 ```

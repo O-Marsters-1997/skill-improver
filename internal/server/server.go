@@ -168,14 +168,9 @@ func Discover(target, outDir string) (root string, files []string, err error) {
 	return target, files, nil
 }
 
-// Docs reads the whole review set. The Submit button and the handoff subcommand both go
-// through it, so neither can hand off a different set of files from the other.
-func Docs(target, outDir string) ([]handoff.Doc, error) {
-	root, files, err := Discover(target, outDir)
-	if err != nil {
-		return nil, err
-	}
-
+// Docs reads a discovered review set. The Submit button and the handoff subcommand both
+// go through it, so neither can hand off a different set of files from the other.
+func Docs(root string, files []string) ([]handoff.Doc, error) {
 	docs := make([]handoff.Doc, 0, len(files))
 	for _, rel := range files {
 		path := filepath.Join(root, filepath.FromSlash(rel))
@@ -192,9 +187,7 @@ func Docs(target, outDir string) ([]handoff.Doc, error) {
 // crafted file= cannot reach outside the target. An empty one means the first file, which
 // is what a single-file review always sends.
 func (s *Server) at(rel string) (string, string, error) {
-	if rel == "" {
-		rel = s.files[0]
-	}
+	rel = cmp.Or(rel, s.files[0])
 	if !slices.Contains(s.files, rel) {
 		return "", "", fmt.Errorf("server: %q is not in the review set: %w", rel, errBadRequest)
 	}
@@ -387,7 +380,7 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	s.writeFile.Lock()
 	defer s.writeFile.Unlock()
 
-	docs, err := Docs(s.target, s.outDir)
+	docs, err := Docs(s.root, s.files)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -459,7 +452,9 @@ func (s *Server) respond(w http.ResponseWriter, rel, path string, src []byte, re
 		return
 	}
 	writeJSON(w, http.StatusOK, doc{
-		Name:    s.name(),
+		// The heading names the skill, not the file being read: a directory review has
+		// many documents and only one of them carries the frontmatter.
+		Name:    skill.NameAt(s.skill),
 		Rel:     rel,
 		Path:    path,
 		Rev:     rev,
@@ -468,20 +463,6 @@ func (s *Server) respond(w http.ResponseWriter, rel, path string, src []byte, re
 		Fields:  s.cfg.Fields,
 		Updater: s.cfg.Updater.Name,
 	})
-}
-
-// The heading names the skill, not the file being read: a directory review has many
-// documents and only one of them carries the frontmatter.
-func (s *Server) name() string {
-	skillMD, err := skill.Resolve(s.skill)
-	if err != nil {
-		return ""
-	}
-	src, err := os.ReadFile(skillMD)
-	if err != nil {
-		return ""
-	}
-	return skill.Name(src)
 }
 
 // The revision stamp is what lets a simultaneous edit in the editor be caught instead

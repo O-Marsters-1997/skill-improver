@@ -822,6 +822,24 @@ func TestHTMLFileInDirectoryRenders(t *testing.T) {
 	}
 }
 
+// A target with no extension, or one nobody has taught the tool about, has always been
+// rendered as Markdown. Listing HTML must not have changed that.
+func TestAnUnknownExtensionStillRendersAsMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(path, []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(config.Default(), path, "", filepath.Join(dir, "out"), "olly")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if d := getDoc(t, s); !strings.Contains(d.HTML, `data-o="`) {
+		t.Errorf("notes.txt did not render:\n%s", d.HTML)
+	}
+}
+
 func TestHandoffSpansEveryFile(t *testing.T) {
 	s, dir := newDirServer(t)
 	commentOn(t, s, "SKILL.md", "never push", "explain the failure mode")

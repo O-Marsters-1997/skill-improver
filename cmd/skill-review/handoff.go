@@ -47,7 +47,11 @@ func handoffAction(_ context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	docs, err := server.Docs(path, outDir)
+	root, files, err := server.Discover(path, outDir)
+	if err != nil {
+		return err
+	}
+	docs, err := server.Docs(root, files)
 	if err != nil {
 		return err
 	}

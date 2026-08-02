@@ -40,8 +40,7 @@ async function api(path, body) {
   return payload;
 }
 
-// Every mutation names the file it applies to and the rev that file was last read at. The
-// file list is redrawn with it, because a thread count may just have moved.
+// The file list is redrawn with every mutation, because a thread count may just have moved.
 async function apply(path, body) {
   draw(await api(path, { file: state.file, rev: state.revs[state.file], ...body }));
   await loadFiles();

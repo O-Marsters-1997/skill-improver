@@ -48,7 +48,7 @@ type Doc struct {
 //
 // skillPath is the skill the payload edits, which is the reviewed document only when no
 // --skill was given. The skill's name is read from its own SKILL.md, never from the
-// reviewed bytes.
+// reviewed bytes: a directory review has many documents and only one of them is it.
 //
 // It is the only function in this package that touches the filesystem, and both the
 // browser's Submit button and the handoff subcommand go through it so the two can never
@@ -62,13 +62,9 @@ func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, e
 	if err != nil {
 		return Result{}, err
 	}
-	// A target that is not a skill at all — a lone report reviewed without --skill —
-	// simply has no name, exactly as reading the reviewed bytes used to give. An
-	// explicit --skill that names no skill is rejected by the CLI, before it gets here.
-	skillSrc, _ := os.ReadFile(skillMD)
 
 	payload := Payload{
-		SkillName:   skill.Name(skillSrc),
+		SkillName:   skill.NameAt(skillPath),
 		SkillPath:   skillPath,
 		Mode:        deriveMode(skillMD, docs),
 		Suggestions: []Suggestion{},

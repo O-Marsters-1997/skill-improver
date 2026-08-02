@@ -7,3 +7,5 @@ require (
 	github.com/urfave/cli/v3 v3.10.1
 	github.com/yuin/goldmark v1.8.5
 )
+
+require golang.org/x/net v0.57.0

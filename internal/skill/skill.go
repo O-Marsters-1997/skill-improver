@@ -19,7 +19,7 @@ const FileName = "SKILL.md"
 // Resolve turns a skill path — either a directory or the SKILL.md itself — into the
 // absolute path of its SKILL.md. Symlinks are left alone: mode derivation resolves them
 // on both sides, and the payload should name the path the reviewer gave.
-func Resolve(path string) (skillMD string, err error) {
+func Resolve(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("skill: resolve %s: %w", path, err)

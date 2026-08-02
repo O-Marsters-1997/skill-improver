@@ -35,11 +35,9 @@ import (
 //go:embed web
 var webFS embed.FS
 
-// target is the file or directory named on the command line; skill is what the payload
-// edits, which is the same path unless --skill said otherwise.
 type Server struct {
 	target    string   // the file or directory named on the command line, absolute
-	skill     string   // absolute
+	skill     string   // what the payload edits: the same path unless --skill said otherwise
 	root      string   // the directory the review set is relative to
 	files     []string // the review set, relative to root, sorted
 	outDir    string
@@ -62,8 +60,8 @@ func formatOf(path string) comments.Format {
 	}
 }
 
-func renderDoc(format comments.Format, src []byte) ([]byte, error) {
-	if format == comments.HTML {
+func renderDoc(path string, src []byte) ([]byte, error) {
+	if formatOf(path) == comments.HTML {
 		return render.HTMLDoc(src)
 	}
 	return render.HTML(src)
@@ -139,7 +137,6 @@ func (s *Server) Path() string { return s.target }
 
 func (s *Server) Skill() string { return s.skill }
 
-// The formats a review can be held in.
 var reviewable = []string{".md", ".html", ".htm"}
 
 // Discover returns every reviewable file under target, as paths relative to root and
@@ -252,7 +249,7 @@ func (s *Server) handleFiles(w http.ResponseWriter, _ *http.Request) {
 				writeError(w, err)
 				return
 			}
-			count = len(handoff.Build(s.cfg, threads, "", "").Suggestions)
+			count = len(handoff.Build(s.cfg, threads))
 		}
 		entries = append(entries, fileEntry{
 			Rel: rel, Ext: strings.ToLower(filepath.Ext(rel)), Threads: count,
@@ -288,9 +285,8 @@ type anchorRequest struct {
 }
 
 func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
-	var req anchorRequest
-	if err := decode(r, &req); err != nil {
-		writeError(w, err)
+	req, ok := decode[anchorRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -341,9 +337,8 @@ type threadRequest struct {
 
 // Fields are patched, not replaced: an empty field in the request is left alone.
 func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
-	var req threadRequest
-	if err := decode(r, &req); err != nil {
-		writeError(w, err)
+	req, ok := decode[threadRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -360,8 +355,8 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
 				id, parent := nextCommentID(t)
 				t.Comments = append(t.Comments, s.newComment(id, parent, body))
 			}
-			setIfGiven(&t.Status, req.Status)
-			setIfGiven(&t.Impact, req.Impact)
+			t.Status = cmp.Or(req.Status, t.Status)
+			t.Impact = cmp.Or(req.Impact, t.Impact)
 			// Only configured fields are accepted, so a stale page cannot write a
 			// key the payload will not carry.
 			for name, value := range req.Fields {
@@ -380,9 +375,8 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleThreadDelete(w http.ResponseWriter, r *http.Request) {
-	var req threadRequest
-	if err := decode(r, &req); err != nil {
-		writeError(w, err)
+	req, ok := decode[threadRequest](w, r)
+	if !ok {
 		return
 	}
 	s.mutate(w, req.File, req.Rev, func(_ string, src []byte) ([]byte, error) {
@@ -396,30 +390,16 @@ func (s *Server) handleThreadDelete(w http.ResponseWriter, r *http.Request) {
 // instead and never writes back to a document — it is a read-only preview/backstop, and
 // only this handler strips comments.
 func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
-	var req fileRequest
-	if err := decode(r, &req); err != nil {
-		writeError(w, err)
+	req, ok := decode[fileRequest](w, r)
+	if !ok {
 		return
 	}
 
 	s.writeFile.Lock()
 	defer s.writeFile.Unlock()
 
-	_, path, err := s.at(req.File)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	src, current, err := s.load(path)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if req.Rev != "" && req.Rev != current {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "the file changed on disk since you loaded it",
-			"rev":   current,
-		})
+	_, path, src, ok := s.open(w, req.File, req.Rev)
+	if !ok {
 		return
 	}
 
@@ -457,9 +437,8 @@ type fileRequest struct {
 }
 
 func (s *Server) handleFileClear(w http.ResponseWriter, r *http.Request) {
-	var req fileRequest
-	if err := decode(r, &req); err != nil {
-		writeError(w, err)
+	req, ok := decode[fileRequest](w, r)
+	if !ok {
 		return
 	}
 	s.mutate(w, req.File, req.Rev, func(_ string, src []byte) ([]byte, error) {
@@ -467,27 +446,38 @@ func (s *Server) handleFileClear(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// The write is refused if the file changed since the client last read it. The rev is per
-// file, so an edit made in the editor to one document leaves the rest of the set usable.
-func (s *Server) mutate(w http.ResponseWriter, file, rev string, fn func(path string, src []byte) ([]byte, error)) {
-	s.writeFile.Lock()
-	defer s.writeFile.Unlock()
-
+// open resolves and reads a file, refusing the request if it changed since the client last
+// read it. The rev is per file, so an edit made in the editor to one document leaves the
+// rest of the set usable. ok is false once a response has been written.
+//
+// Callers must hold writeFile.
+func (s *Server) open(w http.ResponseWriter, file, rev string) (rel, path string, src []byte, ok bool) {
 	rel, path, err := s.at(file)
 	if err != nil {
 		writeError(w, err)
-		return
+		return "", "", nil, false
 	}
 	src, current, err := s.load(path)
 	if err != nil {
 		writeError(w, err)
-		return
+		return "", "", nil, false
 	}
 	if rev != "" && rev != current {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "the file changed on disk since you loaded it",
 			"rev":   current,
 		})
+		return "", "", nil, false
+	}
+	return rel, path, src, true
+}
+
+func (s *Server) mutate(w http.ResponseWriter, file, rev string, fn func(path string, src []byte) ([]byte, error)) {
+	s.writeFile.Lock()
+	defer s.writeFile.Unlock()
+
+	rel, path, src, ok := s.open(w, file, rev)
+	if !ok {
 		return
 	}
 
@@ -501,7 +491,7 @@ func (s *Server) mutate(w http.ResponseWriter, file, rev string, fn func(path st
 		return
 	}
 
-	_, current, err = s.load(path)
+	_, current, err := s.load(path)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -510,7 +500,7 @@ func (s *Server) mutate(w http.ResponseWriter, file, rev string, fn func(path st
 }
 
 func (s *Server) respond(w http.ResponseWriter, rel, path string, src []byte, rev string) {
-	html, err := renderDoc(formatOf(path), src)
+	html, err := renderDoc(path, src)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -601,11 +591,13 @@ func nextCommentID(t comments.Thread) (id, parent string) {
 	return "c" + strconv.Itoa(highest+1), parent
 }
 
-func decode(r *http.Request, into any) error {
-	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		return fmt.Errorf("server: %w: %v", errBadRequest, err)
+// ok is false once the malformed-request response has been written.
+func decode[T any](w http.ResponseWriter, r *http.Request) (req T, ok bool) {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, fmt.Errorf("server: %w: %v", errBadRequest, err))
+		return req, false
 	}
-	return nil
+	return req, true
 }
 
 var (
@@ -632,10 +624,4 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusUnprocessableEntity
 	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})
-}
-
-func setIfGiven(field *string, value string) {
-	if value != "" {
-		*field = value
-	}
 }

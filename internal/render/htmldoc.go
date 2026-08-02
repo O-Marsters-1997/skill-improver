@@ -18,6 +18,9 @@ import (
 // token, so accumulating len(Raw()) tracks absolute position in the source.
 func HTMLDoc(src []byte) ([]byte, error) {
 	var buf bytes.Buffer
+	// bufio buys no speed over a bytes.Buffer; it is here because goldmark's writers,
+	// which writeOffsetSpan and writeMarkup share with the Markdown path, want a
+	// util.BufWriter and *bytes.Buffer is not one.
 	w := bufio.NewWriter(&buf)
 
 	z := html.NewTokenizer(bytes.NewReader(src))

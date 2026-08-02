@@ -1,12 +1,12 @@
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { hiddenFileNames, isShown } from "@/lib/files";
-import type { FileEntry } from "@/lib/types";
+import type { FileEntry, Filter } from "@/lib/types";
 
 interface FileExplorerProps {
   files: FileEntry[];
-  filter: "markdown" | "all";
-  onFilterChange: (filter: "markdown" | "all") => void;
+  filter: Filter;
+  onFilterChange: (filter: Filter) => void;
 }
 
 export function FileExplorer({ files, filter, onFilterChange }: FileExplorerProps) {
@@ -17,7 +17,7 @@ export function FileExplorer({ files, filter, onFilterChange }: FileExplorerProp
     <nav aria-label="Files" className="rounded-xl border bg-card p-4 text-sm shadow-xs">
       <div className="flex items-center gap-2">
         <Label htmlFor="file-filter">Show</Label>
-        <Select value={filter} onValueChange={(value) => onFilterChange(value as "markdown" | "all")}>
+        <Select value={filter} onValueChange={(value) => onFilterChange(value as Filter)}>
           <SelectTrigger id="file-filter" size="sm">
             <SelectValue />
           </SelectTrigger>

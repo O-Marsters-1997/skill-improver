@@ -10,19 +10,20 @@ import (
 
 const fence = "```"
 
+func offsetOf(t *testing.T, src, sub string) (int, int) {
+	t.Helper()
+	i := strings.Index(src, sub)
+	if i < 0 {
+		t.Fatalf("substring %q not in source", sub)
+	}
+	return i, i + len(sub)
+}
+
 func TestAnchor(t *testing.T) {
 	doc := "Comments autosave to disk; never push to a terminal.\n"
-	offsetOf := func(src, sub string) (int, int) {
-		t.Helper()
-		i := strings.Index(src, sub)
-		if i < 0 {
-			t.Fatalf("substring %q not in source", sub)
-		}
-		return i, i + len(sub)
-	}
 
 	t.Run("exact offsets wrap exactly the quote", func(t *testing.T) {
-		start, end := offsetOf(doc, "never push")
+		start, end := offsetOf(t, doc, "never push")
 		got, anchored, err := Anchor([]byte(doc), start, end, "never push", "k3f", Markdown)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
@@ -37,7 +38,7 @@ func TestAnchor(t *testing.T) {
 	})
 
 	t.Run("drifted offsets snap to the quote", func(t *testing.T) {
-		start, end := offsetOf(doc, "never push")
+		start, end := offsetOf(t, doc, "never push")
 		got, anchored, err := Anchor([]byte(doc), start-9, end-9, "never push", "k3f", Markdown)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
@@ -54,7 +55,7 @@ func TestAnchor(t *testing.T) {
 	// browser reports it) can never equal the source slice. The offsets are still right,
 	// so they win and the caller is told what was actually wrapped.
 	t.Run("unmatchable quote falls back to the offsets", func(t *testing.T) {
-		start, end := offsetOf(doc, "never push to a terminal")
+		start, end := offsetOf(t, doc, "never push to a terminal")
 		_, anchored, err := Anchor([]byte(doc), start, end, "never push terminal", "k3f", Markdown)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
@@ -91,7 +92,7 @@ func TestAnchor(t *testing.T) {
 
 	t.Run("refuses to anchor inside the threads block", func(t *testing.T) {
 		src := "text\n\n" + threadsBegin + "\n" + threadsEnd + "\n"
-		start, end := offsetOf(src, threadsBegin)
+		start, end := offsetOf(t, src, threadsBegin)
 		_, _, err := Anchor([]byte(src), start, end, threadsBegin, "k3f", Markdown)
 		if !errors.Is(err, ErrInThreads) {
 			t.Errorf("got %v; want ErrInThreads", err)
@@ -113,7 +114,7 @@ func TestAnchor(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				start, end := offsetOf(src, tt.sub)
+				start, end := offsetOf(t, src, tt.sub)
 				_, _, err := Anchor([]byte(src), start, end, tt.sub, "bbb", Markdown)
 				if !errors.Is(err, tt.wantErr) {
 					t.Errorf("got %v; want %v", err, tt.wantErr)
@@ -124,7 +125,7 @@ func TestAnchor(t *testing.T) {
 
 	t.Run("expands out of a fenced code block", func(t *testing.T) {
 		src := "Before\n\n" + fence + "go\nfmt.Println(1)\n" + fence + "\n\nAfter\n"
-		start, end := offsetOf(src, "Println")
+		start, end := offsetOf(t, src, "Println")
 		got, _, err := Anchor([]byte(src), start, end, "Println", "k3f", Markdown)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
@@ -137,8 +138,8 @@ func TestAnchor(t *testing.T) {
 
 	t.Run("expands a span that only clips a fence", func(t *testing.T) {
 		src := "Before\n\n" + fence + "\ncode\n" + fence + "\n\nAfter\n"
-		start, _ := offsetOf(src, "Before")
-		_, end := offsetOf(src, "code")
+		start, _ := offsetOf(t, src, "Before")
+		_, end := offsetOf(t, src, "code")
 		got, _, err := Anchor([]byte(src), start, end, "", "k3f", Markdown)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
@@ -152,7 +153,7 @@ func TestAnchor(t *testing.T) {
 	// swallow them would move the anchor off what the reviewer selected.
 	t.Run("an HTML host does not expand fences", func(t *testing.T) {
 		src := "<p>Before</p>\n\n" + fence + "go\nfmt.Println(1)\n" + fence + "\n\n<p>After</p>\n"
-		start, end := offsetOf(src, "Println")
+		start, end := offsetOf(t, src, "Println")
 		got, anchored, err := Anchor([]byte(src), start, end, "Println", "k3f", HTML)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
@@ -405,13 +406,8 @@ func TestNewID(t *testing.T) {
 	seen := make(map[string]bool, 1000)
 	for range 1000 {
 		id := NewID()
-		if len(id) == 0 || len(id) > 12 {
-			t.Fatalf("id %q has length %d; want 1..12", id, len(id))
-		}
-		for _, r := range id {
-			if !isBase36(byte(r)) {
-				t.Fatalf("id %q contains %q, which is not base36", id, r)
-			}
+		if !validID(id) {
+			t.Fatalf("id %q is not 1-12 base36 characters", id)
 		}
 		if seen[id] {
 			t.Fatalf("duplicate id %q within 1000 draws", id)

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -235,7 +236,7 @@ func TestUpdaterName(t *testing.T) {
 	})
 
 	t.Run("a configured updater is resolved to its name", func(t *testing.T) {
-		got, err := Load(write(t, "[updater]\nskill = "+quote(dir)+"\n"))
+		got, err := Load(write(t, "[updater]\nskill = "+strconv.Quote(dir)+"\n"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -244,5 +245,3 @@ func TestUpdaterName(t *testing.T) {
 		}
 	})
 }
-
-func quote(s string) string { return `"` + s + `"` }

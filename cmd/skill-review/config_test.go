@@ -14,7 +14,12 @@ import (
 // the user config path cannot be reached by accident.
 func run(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	t.Chdir(t.TempDir())
+	return runIn(t, t.TempDir(), args...)
+}
+
+func runIn(t *testing.T, dir string, args ...string) (string, error) {
+	t.Helper()
+	t.Chdir(dir)
 
 	var out bytes.Buffer
 	cmd := command()
@@ -76,14 +81,12 @@ func TestConfigInit(t *testing.T) {
 	})
 
 	t.Run("refuses to overwrite without --force", func(t *testing.T) {
-		t.Chdir(t.TempDir())
-		if err := os.WriteFile(config.LocalName, []byte("# mine\n"), 0o644); err != nil {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, config.LocalName), []byte("# mine\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		cmd := command()
-		cmd.Writer, cmd.ErrWriter = new(bytes.Buffer), new(bytes.Buffer)
-		err := cmd.Run(t.Context(), []string{"skill-review", "config", "init", "--local"})
+		_, err := runIn(t, dir, "config", "init", "--local")
 
 		if err == nil || !strings.Contains(err.Error(), "--force") {
 			t.Fatalf("err = %v; want a refusal mentioning --force", err)
@@ -94,14 +97,12 @@ func TestConfigInit(t *testing.T) {
 	})
 
 	t.Run("--force overwrites", func(t *testing.T) {
-		t.Chdir(t.TempDir())
-		if err := os.WriteFile(config.LocalName, []byte("# mine\n"), 0o644); err != nil {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, config.LocalName), []byte("# mine\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		cmd := command()
-		cmd.Writer, cmd.ErrWriter = new(bytes.Buffer), new(bytes.Buffer)
-		if err := cmd.Run(t.Context(), []string{"skill-review", "config", "init", "--local", "--force"}); err != nil {
+		if _, err := runIn(t, dir, "config", "init", "--local", "--force"); err != nil {
 			t.Fatal(err)
 		}
 		if body, _ := os.ReadFile(config.LocalName); strings.Contains(string(body), "# mine") {

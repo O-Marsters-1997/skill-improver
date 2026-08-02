@@ -82,7 +82,7 @@ func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, e
 		if err != nil {
 			return Result{}, err
 		}
-		from := Build(cfg, threads, payload.SkillName, skillPath).Suggestions
+		from := Build(cfg, threads)
 		for i := range from {
 			from[i].File = d.Path
 			submitted = append(submitted, from[i].ID)
@@ -99,14 +99,16 @@ func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, e
 	// docs here is one file at a time, everything else pending came from an earlier call.
 	previous := readPending(outDir)
 	byID := make(map[string]Suggestion, len(previous.Suggestions)+len(payload.Suggestions))
-	for _, s := range previous.Suggestions {
-		byID[s.ID] = s
+	for _, s := range slices.Concat(previous.Suggestions, payload.Suggestions) {
+		if !archived[s.ID] {
+			byID[s.ID] = s
+		}
 	}
-	for _, s := range payload.Suggestions {
-		byID[s.ID] = s
-	}
-	payload.Suggestions = slices.DeleteFunc(slices.Collect(maps.Values(byID)), func(s Suggestion) bool {
-		return archived[s.ID]
+	// Rank by id before the priority sort: map iteration is randomised, and sortSuggestions
+	// is stable, so without this two runs over the same threads emit the same suggestions in
+	// a different order — which would churn the file and make Changed meaningless.
+	payload.Suggestions = slices.SortedFunc(maps.Values(byID), func(a, b Suggestion) int {
+		return cmp.Compare(a.ID, b.ID)
 	})
 	sortSuggestions(cfg, payload.Suggestions)
 
@@ -169,10 +171,6 @@ func resolveLinks(path string) string {
 	return path
 }
 
-// The mv is the load-bearing half of every prompt: until it runs those threads stay
-// pending, and once it has run their ids are archived and never handed off again.
-const archiveInstruction = "Once applied, archive it so these suggestions are not handed off again:\nmv %s %s"
-
 // Prompt names the configured skill when there is one. With none configured it spells the
 // same work out instead, so the tool is usable without a skill to delegate to. In output
 // mode it adds the inference step, which is the whole difference between the two modes:
@@ -202,7 +200,9 @@ func Prompt(u config.Updater, mode, skillPath, pending, archive string) string {
 				"needed.\n\n",
 			skillPath)
 	}
-	fmt.Fprintf(&b, archiveInstruction, pending, archive)
+	// The mv is the load-bearing half of every prompt: until it runs those threads stay
+	// pending, and once it has run their ids are archived and never handed off again.
+	fmt.Fprintf(&b, "Once applied, archive it so these suggestions are not handed off again:\nmv %s %s", pending, archive)
 	return b.String()
 }
 

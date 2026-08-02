@@ -31,18 +31,15 @@ func TestBuild(t *testing.T) {
 			thread("d", "high", "second"),
 		}
 
-		got := Build(config.Default(), threads, "example-skill", "/skills/example/SKILL.md")
+		got := Build(config.Default(), threads)
 
-		if got.SkillName != "example-skill" || got.SkillPath != "/skills/example/SKILL.md" {
-			t.Errorf("payload header = %+v", got)
-		}
 		want := []string{"first", "second", "middle", "last"}
-		if len(got.Suggestions) != len(want) {
-			t.Fatalf("got %d suggestions; want %d", len(got.Suggestions), len(want))
+		if len(got) != len(want) {
+			t.Fatalf("got %d suggestions; want %d", len(got), len(want))
 		}
 		for i, w := range want {
-			if !strings.Contains(got.Suggestions[i].Suggestion, w) {
-				t.Errorf("suggestion %d = %q; want it to contain %q", i, got.Suggestions[i].Suggestion, w)
+			if !strings.Contains(got[i].Suggestion, w) {
+				t.Errorf("suggestion %d = %q; want it to contain %q", i, got[i].Suggestion, w)
 			}
 		}
 	})
@@ -56,9 +53,9 @@ func TestBuild(t *testing.T) {
 		deleted := thread("c", "high", "retracted")
 		deleted.Comments[0].Deleted = true
 
-		got := Build(config.Default(), []comments.Thread{resolved, empty, deleted}, "s", "p")
-		if len(got.Suggestions) != 0 {
-			t.Errorf("got %d suggestions; want 0: %+v", len(got.Suggestions), got.Suggestions)
+		got := Build(config.Default(), []comments.Thread{resolved, empty, deleted})
+		if len(got) != 0 {
+			t.Errorf("got %d suggestions; want 0: %+v", len(got), got)
 		}
 	})
 
@@ -68,7 +65,7 @@ func TestBuild(t *testing.T) {
 			Comments: []comments.Comment{{ID: "c1", Author: "olly", Body: "be specific"}},
 		}
 
-		got := Build(config.Default(), []comments.Thread{bare}, "s", "p").Suggestions[0]
+		got := Build(config.Default(), []comments.Thread{bare})[0]
 
 		// The id is what a later handoff matches against its archives to know this
 		// suggestion has already been applied.
@@ -92,7 +89,7 @@ func TestBuild(t *testing.T) {
 		odd := thread("a", "URGENT!!", "do it")
 		odd.Fields["category"] = "vibes"
 
-		got := Build(config.Default(), []comments.Thread{odd}, "s", "p").Suggestions[0]
+		got := Build(config.Default(), []comments.Thread{odd})[0]
 
 		if got.Fields["priority"] != "medium" || got.Fields["category"] != "instructions" {
 			t.Errorf("fields = %+v; want the defaults", got.Fields)
@@ -111,7 +108,7 @@ func TestBuild(t *testing.T) {
 		blocker := thread("b", "", "first")
 		blocker.Fields = map[string]string{"severity": "blocker", "area": "code"}
 
-		got := Build(cfg, []comments.Thread{nit, blocker}, "s", "p").Suggestions
+		got := Build(cfg, []comments.Thread{nit, blocker})
 
 		if len(got) != 2 || got[0].ID != "b" {
 			t.Fatalf("not sorted by severity: %+v", got)
@@ -125,7 +122,7 @@ func TestBuild(t *testing.T) {
 	})
 
 	t.Run("serialises the fields flat alongside the rest", func(t *testing.T) {
-		got := Build(config.Default(), []comments.Thread{thread("a", "high", "do it")}, "s", "p")
+		got := Payload{Suggestions: Build(config.Default(), []comments.Thread{thread("a", "high", "do it")})}
 
 		body, err := json.Marshal(got)
 		if err != nil {
@@ -189,7 +186,7 @@ func TestBuild(t *testing.T) {
 		withImpact := thread("a", "high", "add an example")
 		withImpact.Impact = "fewer misfires on ambiguous input"
 
-		got := Build(config.Default(), []comments.Thread{withImpact}, "s", "p").Suggestions[0]
+		got := Build(config.Default(), []comments.Thread{withImpact})[0]
 
 		if got.ExpectedImpact != "fewer misfires on ambiguous input" {
 			t.Errorf("expected_impact = %q", got.ExpectedImpact)
@@ -200,7 +197,7 @@ func TestBuild(t *testing.T) {
 		long := thread("a", "high", "shorten this")
 		long.Quote = strings.Repeat("x", quoteLimit*2)
 
-		got := Build(config.Default(), []comments.Thread{long}, "s", "p").Suggestions[0]
+		got := Build(config.Default(), []comments.Thread{long})[0]
 
 		if len(got.Suggestion) > quoteLimit*2 {
 			t.Errorf("suggestion is %d chars; a whole code block should not be inlined", len(got.Suggestion))
@@ -213,7 +210,7 @@ func TestBuild(t *testing.T) {
 	t.Run("joins a conversation into one suggestion", func(t *testing.T) {
 		conversation := thread("a", "high", "this is vague", "specifically, say which file")
 
-		got := Build(config.Default(), []comments.Thread{conversation}, "s", "p").Suggestions[0]
+		got := Build(config.Default(), []comments.Thread{conversation})[0]
 
 		for _, want := range []string{"this is vague", "specifically, say which file"} {
 			if !strings.Contains(got.Suggestion, want) {

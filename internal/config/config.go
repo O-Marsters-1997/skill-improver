@@ -67,15 +67,6 @@ func Default() *Config {
 	}
 }
 
-// Suggestions are ordered by the first field, in the order its values are listed, so the
-// first field is the one worth making a ranking.
-func (c *Config) SortField() (Field, bool) {
-	if len(c.Fields) == 0 {
-		return Field{}, false
-	}
-	return c.Fields[0], true
-}
-
 func (c *Config) Field(name string) (Field, bool) {
 	i := slices.IndexFunc(c.Fields, func(f Field) bool { return f.Name == name })
 	if i < 0 {
@@ -222,7 +213,6 @@ func UpdaterName(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 
 	src, err := os.ReadFile(file)
 	if err != nil {

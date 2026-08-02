@@ -36,7 +36,7 @@ just run
 
 ```
 reviewing /path/to/testdata/example-SKILL.md
-serving   http://localhost:8420
+serving   http://127.0.0.1:8420
 ```
 
 That serves the bundled fixture. To review a real skill — flags and the path both go through
@@ -44,10 +44,10 @@ That serves the bundled fixture. To review a real skill — flags and the path b
 
 ```
 just run ~/.claude/skills/my-skill/SKILL.md
-just run --addr :9000 ~/.claude/skills/my-skill/SKILL.md
+just run --addr 127.0.0.1:9000 ~/.claude/skills/my-skill/SKILL.md
 ```
 
-Open `http://localhost:8420` and try the workflow below against the fixture — it's a
+Open `http://127.0.0.1:8420` and try the workflow below against the fixture — it's a
 `SKILL.md` with headings, a fenced code block, a table and a blockquote, built specifically
 to exercise the anchoring.
 
@@ -100,7 +100,7 @@ through `just run`, or straight to the binary from `just build`.
 
 | Flag | Default | Description |
 | ---- | ------- | ----------- |
-| `--addr` | `:8420` | address to serve on |
+| `--addr` | `127.0.0.1:8420` | address to serve on. Loopback-only by default: the API rewrites the file under review and has no authentication, so `--addr :8420` hands that to anyone on the network |
 | `--out` | `.skill-review` | directory for handoff payloads |
 | `--author` | `$USER` env var, or `reviewer` if unset | name recorded against comments |
 | `--config` | *(see [Configuration](#configuration))* | config file to use |

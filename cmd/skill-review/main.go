@@ -2,13 +2,14 @@
 // and hands the comments to a skill that applies them.
 //
 //	skill-review path/to/SKILL.md
-//	→ http://localhost:8420
+//	→ http://127.0.0.1:8420
 package main
 
 import (
 	"cmp"
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -37,8 +38,8 @@ func command() *cli.Command {
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:  "addr",
-				Value: ":8420",
-				Usage: "address to serve on",
+				Value: "127.0.0.1:8420",
+				Usage: "address to serve on (loopback-only by default)",
 			},
 			&cli.StringFlag{
 				Name:  "out",
@@ -101,12 +102,30 @@ func serve(_ context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	addr := cmd.String("addr")
-	log.Printf("reviewing %s\nserving   http://localhost%s", reviewer.Path(), addr)
+	// Listening before logging keeps the URL honest: a bad address or a taken port fails
+	// here instead of printing somewhere the reviewer cannot open.
+	ln, err := net.Listen("tcp", cmd.String("addr"))
+	if err != nil {
+		return err
+	}
+	log.Printf("reviewing %s\nserving   %s", reviewer.Path(), browsableURL(ln.Addr().String()))
+
 	srv := &http.Server{
-		Addr:              addr,
 		Handler:           reviewer,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	return srv.ListenAndServe()
+	return srv.Serve(ln)
+}
+
+// A wildcard host is not something a browser can open, so the logged URL says localhost
+// while the listener keeps whatever was asked for.
+func browsableURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
+	}
+	if host == "" || net.ParseIP(host).IsUnspecified() {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }

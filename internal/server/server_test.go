@@ -958,6 +958,37 @@ func TestServesThePage(t *testing.T) {
 	}
 }
 
+// A reviewed file's path is also its URL, so a deep link has to reach the SPA rather than
+// the 404 a static file server would give it. ".." is checked alongside: it must land on
+// the page too, never on a file outside the asset set.
+func TestServesThePageForDeepLinks(t *testing.T) {
+	page := []byte("<!doctype html><div id=\"root\"></div>")
+	fsys := fstest.MapFS{
+		"index.html": {Data: page},
+		"app.js":     {Data: []byte("console.log(1)")},
+	}
+
+	for _, path := range []string{"/references/theming.md", "/SKILL.md", "/../secret"} {
+		w := httptest.NewRecorder()
+		assetHandler(fsys).ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+
+		if w.Code != http.StatusOK {
+			t.Errorf("GET %s = %d", path, w.Code)
+			continue
+		}
+		if !bytes.Equal(w.Body.Bytes(), page) {
+			t.Errorf("GET %s did not serve index.html:\n%s", path, w.Body)
+		}
+	}
+
+	// The fallback must not swallow the real assets the page then asks for.
+	w := httptest.NewRecorder()
+	assetHandler(fsys).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/app.js", nil))
+	if got := w.Body.String(); got != "console.log(1)" {
+		t.Errorf("GET /app.js = %q, want the asset", got)
+	}
+}
+
 func TestServesFallbackWhenFrontendNotBuilt(t *testing.T) {
 	fallback := []byte("run `just web`")
 	w := httptest.NewRecorder()

@@ -12,7 +12,9 @@ function clamp(value: number, low: number, high: number) {
 }
 
 // Positioned imperatively, same as the original: the anchor is a text Range, not an
-// element, so there's no declarative "attach to this node" API to reach for.
+// element, so there's no declarative "attach to this node" API to reach for. Fixed rather
+// than absolute, because the document pane is its own scroll container — the page's
+// scrollY says nothing about where the selection now sits.
 export function SelectionMenu({ menuRef, anchorRect, onComment }: SelectionMenuProps) {
   useLayoutEffect(() => {
     const node = menuRef.current;
@@ -25,8 +27,8 @@ export function SelectionMenu({ menuRef, anchorRect, onComment }: SelectionMenuP
     const above = anchorRect.top - height - gap;
     const top = above < gap ? anchorRect.bottom + gap : above;
 
-    node.style.left = `${left + window.scrollX}px`;
-    node.style.top = `${top + window.scrollY}px`;
+    node.style.left = `${left}px`;
+    node.style.top = `${top}px`;
   }, [menuRef, anchorRect]);
 
   if (!anchorRect) return null;
@@ -36,7 +38,7 @@ export function SelectionMenu({ menuRef, anchorRect, onComment }: SelectionMenuP
       ref={menuRef}
       role="toolbar"
       aria-label="Selection actions"
-      className="absolute z-40 rounded-lg border bg-popover p-1 shadow-lg"
+      className="fixed z-40 rounded-lg border bg-popover p-1 shadow-lg"
     >
       <Button type="button" size="sm" onClick={onComment} aria-label="Comment on selection">
         💬 Comment

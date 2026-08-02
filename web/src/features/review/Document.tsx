@@ -4,6 +4,7 @@ import type { Thread } from "@/lib/types";
 interface DocumentProps {
   containerRef: RefObject<HTMLDivElement | null>;
   html: string | null;
+  error: string | null;
   threads: Thread[];
   selectedId: string | null;
   onSelectThread: (id: string) => void;
@@ -14,7 +15,7 @@ interface DocumentProps {
 // see that hook's comment. Rendered markdown comes straight from internal/render via
 // dangerouslySetInnerHTML; it's safe because render.writeMarkup escapes every raw HTML
 // tag that isn't its own mc marker (render_test.go asserts <script> never survives).
-export function Document({ containerRef, html, threads, selectedId, onSelectThread }: DocumentProps) {
+export function Document({ containerRef, html, error, threads, selectedId, onSelectThread }: DocumentProps) {
   // React only re-renders this subtree when `html` changes (dangerouslySetInnerHTML skips
   // the DOM write when the string is unchanged), so resolved/selected classes have to be
   // reapplied here rather than baked into the server's markup.
@@ -35,8 +36,17 @@ export function Document({ containerRef, html, threads, selectedId, onSelectThre
 
   if (html === null) {
     return (
-      <div id="doc" ref={containerRef} className="rounded-lg border bg-card p-8 text-muted-foreground md:p-10">
-        Loading…
+      <div id="doc" ref={containerRef}>
+        {error ? (
+          <>
+            <p className="m-0 font-medium">{error}</p>
+            <p className="mt-2 mb-0 text-sm text-muted-foreground">
+              Pick a file from the explorer, or <a href="/">go back to the first one</a>.
+            </p>
+          </>
+        ) : (
+          <p className="m-0 text-muted-foreground">Loading…</p>
+        )}
       </div>
     );
   }
@@ -47,7 +57,6 @@ export function Document({ containerRef, html, threads, selectedId, onSelectThre
       ref={containerRef}
       aria-label="Skill under review"
       onClick={handleClick}
-      className="rounded-lg border bg-card p-8 shadow-xs md:p-10"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

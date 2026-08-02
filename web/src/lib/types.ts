@@ -30,6 +30,9 @@ export interface Field {
 
 export interface Doc {
   name: string;
+  // The file the server resolved, which is not always the one the URL asked for: "/" means
+  // the first file in the review set. Mutations address this, never the URL.
+  rel: string;
   path: string;
   rev: string;
   html: string;

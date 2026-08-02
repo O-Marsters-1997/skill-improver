@@ -72,15 +72,21 @@ export function useSelection(docRef: RefObject<HTMLElement | null>) {
       if (composerOpen) closeComposer();
     };
 
+    // The menu is anchored to viewport coordinates, so any scroll — the page's or the
+    // document pane's own — strands it. Capture, because scroll does not bubble.
+    const onScroll = () => setAnchorRect(null);
+
     container.addEventListener("mouseup", onMouseUp);
     container.addEventListener("keyup", onKeyUp);
     document.addEventListener("mousedown", onMouseDown);
     document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("scroll", onScroll, true);
     return () => {
       container.removeEventListener("mouseup", onMouseUp);
       container.removeEventListener("keyup", onKeyUp);
       document.removeEventListener("mousedown", onMouseDown);
       document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("scroll", onScroll, true);
     };
   }, [docRef, composerOpen, closeComposer]);
 

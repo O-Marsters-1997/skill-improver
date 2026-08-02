@@ -1,9 +1,13 @@
 # skill-review
 
-A local web UI for reviewing a `SKILL.md`: highlight a passage, leave a comment, triage it,
-and hand the whole set off to the skill that applies them in one click. Comments are written
-straight into the `SKILL.md` as you make them, so there is no in-memory review state to
-lose — the file on disk is the only state.
+A local web UI for reviewing a Markdown document: highlight a passage, leave a comment,
+triage it, and hand the whole set off to the skill that applies them in one click. Comments
+are written straight into the file as you make them, so there is no in-memory review state
+to lose — the file on disk is the only state.
+
+The document is usually a skill's own `SKILL.md`. It does not have to be: `--skill` points
+the payload at a *different* skill, so you can review something a skill **produced** and
+have the suggestions land on the instructions that produced it.
 
 What the triage asks for and which skill receives the payload are
 [configurable](#configuration); out of the box it is a priority and a category, and the
@@ -12,8 +16,10 @@ prompt spells the work out rather than naming a skill.
 See [`docs/CONTEXT.md`](docs/CONTEXT.md) for the vocabulary (anchor, thread, quote, field,
 rev) and the reasoning behind the design;
 [`docs/adr/0001-goldmark.md`](docs/adr/0001-goldmark.md) for why rendering happens
-server-side, and [`docs/adr/0002-toml-config.md`](docs/adr/0002-toml-config.md) for why the
-config is TOML and why fields are stored flat.
+server-side, [`docs/adr/0002-toml-config.md`](docs/adr/0002-toml-config.md) for why the
+config is TOML and why fields are stored flat, and
+[`docs/adr/0003-target-is-not-the-skill.md`](docs/adr/0003-target-is-not-the-skill.md) for
+why the target and the skill are two arguments.
 
 ## Install
 
@@ -85,17 +91,17 @@ just retry.
 ## Commands and flags
 
 ```
-usage: skill-review [flags] <path-to-SKILL.md>
+usage: skill-review [flags] <target>
 ```
 
 `serve` is the default command, so the bare form above is the same as
-`skill-review serve <path>`. Flags may go before or after the command name; pass them
+`skill-review serve <target>`. Flags may go before or after the command name; pass them
 through `just run`, or straight to the binary from `just build`.
 
 | Command | What it does |
 | ------- | ------------ |
-| `serve <path>` | Serve a `SKILL.md` for review. The default — the name is optional |
-| `handoff <path>` | Print the payload and prompt for a `SKILL.md` without serving anything. The backstop when the browser is not an option |
+| `serve <target>` | Serve a document for review. The default — the name is optional |
+| `handoff <target>` | Print the payload and prompt for a document without serving anything. The backstop when the browser is not an option |
 | `config init` | Write a config file with the built-in defaults spelled out |
 
 | Flag | Default | Description |
@@ -104,6 +110,7 @@ through `just run`, or straight to the binary from `just build`.
 | `--out` | `.skill-review` | directory for handoff payloads |
 | `--author` | `$USER` env var, or `reviewer` if unset | name recorded against comments |
 | `--config` | *(see [Configuration](#configuration))* | config file to use |
+| `--skill` | the target | skill the payload edits, when the target is something the skill produced |
 
 `config init` takes three of its own:
 
@@ -193,10 +200,12 @@ Two kinds of file live there:
 
 ## The handoff step
 
-Clicking **Submit all** writes `pending.json`: `skill_name`, `skill_path`, and an
-`improvement_suggestions` list, each with the thread's `id`, one key per
-[configured field](#configuration), `suggestion` (the comment thread text, with the anchored
-quote appended) and `expected_impact`, sorted by the first field. `expected_impact` is
+Clicking **Submit all** writes `pending.json`: `skill_name`, `skill_path`, `mode`, and an
+`improvement_suggestions` list, each with the thread's `id`, the absolute `file` it was
+anchored in, one key per [configured field](#configuration), `suggestion` (the comment
+thread text, with the anchored quote appended) and `expected_impact`, sorted by the first
+field. `skill_name` is read from `<skill>/SKILL.md`, so it names the skill being improved
+even when that is not the file you reviewed. `expected_impact` is
 synthesised from the anchored quote — the UI never asks for it, because an updater derives
 that kind of framing better than a text box collects it.
 
@@ -230,9 +239,9 @@ Everything else follows from it:
 The prompt is kept in three places so it can't be lost: the panel in the UI (which waits to
 be dismissed), a `prompt` field in `pending.json` itself, and a line printed to the terminal
 running the server. That file is therefore a superset of what an updater reads — `skill_name`,
-`skill_path` and `improvement_suggestions` are still at the top level.
+`skill_path`, `mode` and `improvement_suggestions` are still at the top level.
 
-`skill-review handoff <path>` does all of the above without a browser, printing the payload
+`skill-review handoff <target>` does all of the above without a browser, printing the payload
 and the prompt to stdout. It runs the same code the button does, so a broken button is never
 a dead end.
 

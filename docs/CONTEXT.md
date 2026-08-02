@@ -1,16 +1,20 @@
 # Context
 
-`skill-review` renders a SKILL.md as a page you can highlight and comment on, then hands
-the comments to a skill that applies them — for the author, `skill-updater`, which edits
-the skill in its source repo and opens a draft PR.
+`skill-review` renders a Markdown document as a page you can highlight and comment on,
+then hands the comments to a skill that applies them — for the author, `skill-updater`,
+which edits the skill in its source repo and opens a draft PR. The document is usually the
+skill's own SKILL.md, but it does not have to be: point `--skill` somewhere else and the
+comments become suggestions about the skill that produced what you are reading.
 
 What the review asks for and who receives it are configured, not compiled in: the triage
 fields and the updater skill come from a TOML file, and the built-in defaults are what the
 tool hardcoded before it had one.
 
 ```
-skill-review path/to/SKILL.md      # serves http://localhost:8420
-skill-review config init           # write the defaults out to edit
+skill-review path/to/SKILL.md          # serves http://localhost:8420
+skill-review --skill ~/.claude/skills/ideate report.md
+                                       # review the output, edit the skill
+skill-review config init               # write the defaults out to edit
 go test ./...
 ```
 
@@ -39,6 +43,19 @@ evals are run separately, by choice, after a skill changes.
 ## Vocabulary
 
 Terms mean exactly this throughout the code, the API and the UI.
+
+**Target** — the file being read and commented on. The one positional argument.
+
+**Skill** — the skill the payload edits. `--skill`, defaulting to the target. The two are
+different whenever the thing under review is something the skill *produced* rather than
+the skill itself, which is the review with the most to say about whether a skill works.
+
+**Mode** — `instructions` when the target resolves inside the skill directory, `output`
+when it does not. **Derived from the two paths, never declared**, because a flag would let
+them disagree. Symlinks are resolved on both sides first, or every skill installed into
+`~/.claude/skills` as a link would read as `output`. The mode is what the prompt changes:
+in `output` mode the updater is told to infer which instruction caused each observation
+and edit the `SKILL.md`, not the reviewed file.
 
 **Anchor** — a passage of the document a thread is attached to. Written as a **marker**
 pair in the source: `<!--mc:a:ID-->the passage<!--mc:/a:ID-->`. Because the markers live in
@@ -73,11 +90,13 @@ simply not offered. The defaults are `priority` (high/medium/low) and `category`
 (instructions, tools, examples, error_handling, structure, references).
 
 **Suggestion** and **payload** — the updater's vocabulary, not ours. A thread becomes one
-suggestion carrying the thread's `id`, one key per field, the suggestion text and an
-`expected_impact`; the payload is the set of them plus the skill's name and path, ordered by
-the first field in the order its values are listed. The composer asks for none of it: fields
-are set on the thread cards, where every other thread is in view, because ranking one
-comment against nothing is not a judgement anyone can make.
+suggestion carrying the thread's `id`, the absolute `file` it was anchored in, one key per
+field, the suggestion text and an `expected_impact`; the payload is the set of them plus
+the skill's name, path and mode, ordered by the first field in the order its values are
+listed. The name comes from `<skill>/SKILL.md`, never from the reviewed bytes. The
+composer asks for none of it: fields are set on the thread cards, where every other thread
+is in view, because ranking one comment against nothing is not a judgement anyone can
+make.
 
 **Pending** and **archive** — `.skill-review/pending.json` holds every open thread that has
 not yet been handed off. It is regenerated on each Submit, so a retriage, a reply or a
@@ -94,7 +113,7 @@ local record and is never handed off again.
 | `internal/comments` | the mc format — parse, anchor, upsert, remove |
 | `internal/render` | Markdown → HTML with byte offsets stamped on every run |
 | `internal/config` | the TOML file — fields, updater, defaults, validation |
-| `internal/skill` | the `name:` in a SKILL.md's frontmatter |
+| `internal/skill` | the `name:` in a SKILL.md's frontmatter, and directory → SKILL.md |
 | `internal/handoff` | threads → payload (`Build`), and payload → disk (`Submit`) |
 | `internal/server` | the routes, the file lock, the embedded page |
 

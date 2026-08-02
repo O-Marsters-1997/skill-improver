@@ -14,6 +14,7 @@ func TestServeDispatch(t *testing.T) {
 		name   string
 		args   []string
 		path   string
+		skill  string
 		addr   string
 		out    string
 		author string
@@ -50,16 +51,25 @@ func TestServeDispatch(t *testing.T) {
 			out:    ".skill-review",
 			author: "olly",
 		},
+		{
+			name:   "a target reviewed against a different skill",
+			args:   []string{"skill-review", "--skill", "/skills/ideate", "report.md"},
+			path:   "report.md",
+			skill:  "/skills/ideate",
+			addr:   ":8420",
+			out:    ".skill-review",
+			author: "olly",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("USER", "olly")
 
-			var got struct{ path, addr, out, author string }
+			var got struct{ path, skill, addr, out, author string }
 			cmd := command()
 			cmd.Command("serve").Action = func(_ context.Context, c *cli.Command) error {
-				got.path = c.StringArg("skill")
+				got.path, got.skill = c.StringArg("target"), c.String("skill")
 				got.addr, got.out, got.author = c.String("addr"), c.String("out"), c.String("author")
 				return nil
 			}
@@ -67,8 +77,8 @@ func TestServeDispatch(t *testing.T) {
 			if err := cmd.Run(t.Context(), tt.args); err != nil {
 				t.Fatalf("Run(%q): %v", tt.args, err)
 			}
-			if got.path != tt.path || got.addr != tt.addr || got.out != tt.out || got.author != tt.author {
-				t.Errorf("got %+v, want path=%q addr=%q out=%q author=%q", got, tt.path, tt.addr, tt.out, tt.author)
+			if got.path != tt.path || got.skill != tt.skill || got.addr != tt.addr || got.out != tt.out || got.author != tt.author {
+				t.Errorf("got %+v, want path=%q skill=%q addr=%q out=%q author=%q", got, tt.path, tt.skill, tt.addr, tt.out, tt.author)
 			}
 		})
 	}

@@ -22,10 +22,13 @@ import (
 const quoteLimit = 200
 
 // ID is the originating thread's, and is what tells a later handoff that this
-// suggestion has already been applied. Fields carries whatever the config asks for, and
-// is written flat alongside the rest.
+// suggestion has already been applied. File is the absolute path of the document the
+// thread was anchored in, which is not the skill when the review is of the skill's
+// output. Fields carries whatever the config asks for, and is written flat alongside
+// the rest.
 type Suggestion struct {
 	ID             string
+	File           string
 	Fields         map[string]string
 	Suggestion     string
 	ExpectedImpact string
@@ -36,6 +39,7 @@ type Suggestion struct {
 func (s Suggestion) MarshalJSON() ([]byte, error) {
 	flat := map[string]string{
 		"id":              s.ID,
+		"file":            s.File,
 		"suggestion":      s.Suggestion,
 		"expected_impact": s.ExpectedImpact,
 	}
@@ -48,9 +52,11 @@ func (s *Suggestion) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &flat); err != nil {
 		return err
 	}
-	s.ID, s.Suggestion, s.ExpectedImpact = flat["id"], flat["suggestion"], flat["expected_impact"]
+	s.ID, s.File = flat["id"], flat["file"]
+	s.Suggestion, s.ExpectedImpact = flat["suggestion"], flat["expected_impact"]
 
 	delete(flat, "id")
+	delete(flat, "file")
 	delete(flat, "suggestion")
 	delete(flat, "expected_impact")
 	if len(flat) > 0 {
@@ -59,9 +65,21 @@ func (s *Suggestion) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Mode tells the updater what it is being shown. It is derived from the paths rather
+// than declared, because a flag would let the two disagree.
+const (
+	// ModeInstructions — the reviewed document is inside the skill, so a suggestion is
+	// about the text it names.
+	ModeInstructions = "instructions"
+	// ModeOutput — the reviewed document is something the skill produced, so the
+	// instruction that caused a suggestion has to be inferred.
+	ModeOutput = "output"
+)
+
 type Payload struct {
 	SkillName   string       `json:"skill_name"`
 	SkillPath   string       `json:"skill_path"`
+	Mode        string       `json:"mode"`
 	Suggestions []Suggestion `json:"improvement_suggestions"`
 }
 
@@ -94,14 +112,22 @@ func Build(cfg *config.Config, threads []comments.Thread, skillName, skillPath s
 		})
 	}
 
-	// The first field is the ranking one, ordered as its values are listed.
-	if sortBy, ok := cfg.SortField(); ok {
-		slices.SortStableFunc(payload.Suggestions, func(a, b Suggestion) int {
-			return slices.Index(sortBy.Values, a.Fields[sortBy.Name]) -
-				slices.Index(sortBy.Values, b.Fields[sortBy.Name])
-		})
-	}
+	sortSuggestions(cfg, payload.Suggestions)
 	return payload
+}
+
+// The first field is the ranking one, ordered as its values are listed. Submit runs this
+// again over the concatenation of several documents' suggestions, which a stable sort
+// leaves ranked across the whole review rather than within each file.
+func sortSuggestions(cfg *config.Config, suggestions []Suggestion) {
+	sortBy, ok := cfg.SortField()
+	if !ok {
+		return
+	}
+	slices.SortStableFunc(suggestions, func(a, b Suggestion) int {
+		return slices.Index(sortBy.Values, a.Fields[sortBy.Name]) -
+			slices.Index(sortBy.Values, b.Fields[sortBy.Name])
+	})
 }
 
 func liveBodies(cs []comments.Comment) []string {

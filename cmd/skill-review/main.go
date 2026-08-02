@@ -55,6 +55,10 @@ func command() *cli.Command {
 				Name:  "config",
 				Usage: "config file to use, instead of " + config.LocalName + " or the user config file",
 			},
+			&cli.StringFlag{
+				Name:  "skill",
+				Usage: "skill the payload edits, when the target is something the skill produced (default: the target)",
+			},
 		},
 		Commands: []*cli.Command{serveCommand(), handoffCommand(), configCommand()},
 	}
@@ -76,17 +80,17 @@ func load(cmd *cli.Command) (*config.Config, error) {
 func serveCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "serve",
-		Usage:     "serve a SKILL.md for review (the default command)",
-		ArgsUsage: "<path-to-SKILL.md>",
-		Arguments: []cli.Argument{&cli.StringArg{Name: "skill"}},
+		Usage:     "serve a document for review (the default command)",
+		ArgsUsage: "<target>",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "target"}},
 		Action:    serve,
 	}
 }
 
 func serve(_ context.Context, cmd *cli.Command) error {
-	path := cmd.StringArg("skill")
+	path := cmd.StringArg("target")
 	if path == "" {
-		return cli.Exit("usage: skill-review [flags] <path-to-SKILL.md>", 2)
+		return cli.Exit("usage: skill-review [flags] <target>", 2)
 	}
 
 	cfg, err := load(cmd)
@@ -96,13 +100,13 @@ func serve(_ context.Context, cmd *cli.Command) error {
 
 	// A set-but-empty $USER satisfies the env source, so the fallback is applied here
 	// rather than left to the flag default.
-	reviewer, err := server.New(cfg, path, cmd.String("out"), cmp.Or(cmd.String("author"), "reviewer"))
+	reviewer, err := server.New(cfg, path, cmd.String("skill"), cmd.String("out"), cmp.Or(cmd.String("author"), "reviewer"))
 	if err != nil {
 		return err
 	}
 
 	addr := cmd.String("addr")
-	log.Printf("reviewing %s\nserving   http://localhost%s", reviewer.Path(), addr)
+	log.Printf("reviewing %s\nediting   %s\nserving   http://localhost%s", reviewer.Path(), reviewer.Skill(), addr)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           reviewer,

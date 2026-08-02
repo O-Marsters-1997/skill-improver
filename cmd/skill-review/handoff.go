@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,23 +18,27 @@ import (
 func handoffCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "handoff",
-		Usage:     "collect the comments in a SKILL.md into a payload, without serving anything",
-		ArgsUsage: "<path-to-SKILL.md>",
-		Arguments: []cli.Argument{&cli.StringArg{Name: "skill"}},
+		Usage:     "collect the comments in a document into a payload, without serving anything",
+		ArgsUsage: "<target>",
+		Arguments: []cli.Argument{&cli.StringArg{Name: "target"}},
 		Action:    handoffAction,
 	}
 }
 
 func handoffAction(_ context.Context, cmd *cli.Command) error {
-	path := cmd.StringArg("skill")
+	path := cmd.StringArg("target")
 	if path == "" {
-		return cli.Exit("usage: skill-review handoff <path-to-SKILL.md>", 2)
+		return cli.Exit("usage: skill-review handoff <target>", 2)
 	}
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
 	src, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	skillPath, err := filepath.Abs(cmp.Or(cmd.String("skill"), path))
 	if err != nil {
 		return err
 	}
@@ -47,7 +52,7 @@ func handoffAction(_ context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	result, err := handoff.Submit(cfg, outDir, path, src)
+	result, err := handoff.Submit(cfg, outDir, skillPath, []handoff.Doc{{Path: path, Src: src}})
 	if err != nil {
 		return err
 	}

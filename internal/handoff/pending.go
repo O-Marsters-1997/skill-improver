@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/O-Marsters-1997/improve-skills/internal/comments"
@@ -33,26 +34,59 @@ type pendingFile struct {
 	Archive string `json:"archive"`
 }
 
-// Submit regenerates the pending file from the document rather than appending to it, so a
-// thread that was retriaged, replied to, resolved or deleted since the last submit is
-// reflected. Only threads already moved to an archive file are excluded, which is what
-// stops the updater being handed the same suggestion twice.
+// A Doc is one reviewed document: where it lives, and the bytes the threads were parsed
+// out of. Path is absolute, because it is what the updater is told to look at.
+type Doc struct {
+	Path string
+	Src  []byte
+}
+
+// Submit regenerates the pending file from the reviewed documents rather than appending
+// to it, so a thread that was retriaged, replied to, resolved or deleted since the last
+// submit is reflected. Only threads already moved to an archive file are excluded, which
+// is what stops the updater being handed the same suggestion twice.
+//
+// skillPath is the skill the payload edits, which is the reviewed document only when no
+// --skill was given. The skill's name is read from its own SKILL.md, never from the
+// reviewed bytes.
 //
 // It is the only function in this package that touches the filesystem, and both the
 // browser's Submit button and the handoff subcommand go through it so the two can never
 // disagree.
-func Submit(cfg *config.Config, outDir, skillPath string, src []byte) (Result, error) {
-	threads, err := comments.Threads(src)
-	if err != nil {
-		return Result{}, err
-	}
+func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, error) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return Result{}, fmt.Errorf("handoff: create %s: %w", outDir, err)
 	}
 
+	skillDir, skillMD, err := skill.Resolve(skillPath)
+	if err != nil {
+		return Result{}, err
+	}
+	// A target that is not a skill at all — a lone report reviewed without --skill —
+	// simply has no name, exactly as reading the reviewed bytes used to give.
+	frontmatter, _ := os.ReadFile(skillMD)
+
+	payload := Payload{
+		SkillName:   skill.Name(frontmatter),
+		SkillPath:   skillPath,
+		Mode:        deriveMode(skillDir, docs),
+		Suggestions: []Suggestion{},
+	}
+	for _, d := range docs {
+		threads, err := comments.Threads(d.Src)
+		if err != nil {
+			return Result{}, err
+		}
+		from := Build(cfg, threads, payload.SkillName, skillPath).Suggestions
+		for i := range from {
+			from[i].File = d.Path
+		}
+		payload.Suggestions = append(payload.Suggestions, from...)
+	}
+	sortSuggestions(cfg, payload.Suggestions)
+
 	file := filepath.Join(outDir, PendingName)
 	archived := archivedIDs(outDir)
-	payload := Build(cfg, threads, skill.Name(src), skillPath)
 	payload.Suggestions = slices.DeleteFunc(payload.Suggestions, func(s Suggestion) bool {
 		return archived[s.ID]
 	})
@@ -71,7 +105,7 @@ func Submit(cfg *config.Config, outDir, skillPath string, src []byte) (Result, e
 		archive = filepath.Join(outDir, fmt.Sprintf("handoff-%s-%s.json",
 			cmp.Or(payload.SkillName, "skill"), time.Now().UTC().Format("20060102T150405Z")))
 	}
-	prompt := Prompt(cfg.Updater, skillPath, file, archive)
+	prompt := Prompt(cfg.Updater, payload.Mode, skillPath, file, archive)
 
 	body, err := json.MarshalIndent(pendingFile{Payload: payload, Prompt: prompt, Archive: archive}, "", "  ")
 	if err != nil {
@@ -90,23 +124,57 @@ func Submit(cfg *config.Config, outDir, skillPath string, src []byte) (Result, e
 	return Result{File: file, Prompt: prompt, Changed: changed, Payload: payload}, nil
 }
 
-// The mv is the load-bearing half of both prompts: until it runs those threads stay
+// A document counts as instructions only when every reviewed file resolves inside the
+// skill. Symlinks are resolved on both sides first: ~/.claude/skills is largely a symlink
+// farm into ~/.agents/skills, and without that step every real skill reads as output.
+func deriveMode(skillDir string, docs []Doc) string {
+	for _, d := range docs {
+		rel, err := filepath.Rel(resolveLinks(skillDir), resolveLinks(d.Path))
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return ModeOutput
+		}
+	}
+	return ModeInstructions
+}
+
+// A path that does not exist yet cannot be resolved, and is no worse off unresolved.
+func resolveLinks(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
+// The mv is the load-bearing half of every prompt: until it runs those threads stay
 // pending, and once it has run their ids are archived and never handed off again.
 const archiveInstruction = "Once applied, archive it so these suggestions are not handed off again:\nmv %s %s"
 
 // Prompt names the configured skill when there is one. With none configured it spells the
-// same work out instead, so the tool is usable without a skill to delegate to.
-func Prompt(u config.Updater, skillPath, pending, archive string) string {
+// same work out instead, so the tool is usable without a skill to delegate to. In output
+// mode it adds the inference step, which is the whole difference between the two modes:
+// the suggestions describe a document the skill wrote, not the skill.
+func Prompt(u config.Updater, mode, skillPath, pending, archive string) string {
+	var b strings.Builder
 	if u.Name != "" {
-		return fmt.Sprintf("Use %s with the payload in %s\n\n"+archiveInstruction, u.Name, pending, pending, archive)
+		fmt.Fprintf(&b, "Use %s with the payload in %s\n\n", u.Name, pending)
+	} else {
+		fmt.Fprintf(&b,
+			"Apply the improvement suggestions in %s to the skill at %s.\n\n"+
+				"Work through them in the order given. For each one, make the smallest edit to the\n"+
+				"SKILL.md that satisfies it, keeping the skill's existing voice and structure — do\n"+
+				"not restructure anything a suggestion did not ask about.\n\n",
+			pending, skillPath)
 	}
-	return fmt.Sprintf(
-		"Apply the improvement suggestions in %s to the skill at %s.\n\n"+
-			"Work through them in the order given. For each one, make the smallest edit to the\n"+
-			"SKILL.md that satisfies it, keeping the skill's existing voice and structure — do\n"+
-			"not restructure anything a suggestion did not ask about.\n\n"+
-			archiveInstruction,
-		pending, skillPath, pending, archive)
+	if mode == ModeOutput {
+		fmt.Fprintf(&b,
+			"These suggestions are observations about a document the skill produced, named by\n"+
+				"the \"file\" key on each one — not about the skill's own text. For each, infer which\n"+
+				"instruction in the skill at %s allowed it, and edit that SKILL.md:\n"+
+				"never the reviewed file.\n\n",
+			skillPath)
+	}
+	fmt.Fprintf(&b, archiveInstruction, pending, archive)
+	return b.String()
 }
 
 func readPending(outDir string) pendingFile {

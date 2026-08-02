@@ -6,9 +6,29 @@
 package skill
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
+
+// FileName is the one file a skill directory is required to have.
+const FileName = "SKILL.md"
+
+// Resolve turns a skill path — either a directory or the SKILL.md itself — into both,
+// absolute. Symlinks are left alone: mode derivation resolves them on both sides, and
+// the payload should name the path the reviewer gave.
+func Resolve(path string) (dir, skillMD string, err error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", "", fmt.Errorf("skill: resolve %s: %w", path, err)
+	}
+	if info, err := os.Stat(abs); err == nil && info.IsDir() {
+		return abs, filepath.Join(abs, FileName), nil
+	}
+	return filepath.Dir(abs), abs, nil
+}
 
 var frontmatterName = regexp.MustCompile(`(?m)^name:[ \t]*["']?([^"'\r\n]+?)["']?[ \t]*$`)
 

@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/O-Marsters-1997/improve-skills/internal/config"
+	"github.com/O-Marsters-1997/improve-skills/internal/handoff"
 )
 
 const fixture = `---
@@ -31,7 +34,7 @@ func newTestServer(t *testing.T) (*Server, string) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	s, err := New(path, filepath.Join(dir, "out"), "olly")
+	s, err := New(config.Default(), path, filepath.Join(dir, "out"), "olly")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -108,6 +111,60 @@ func TestDoc(t *testing.T) {
 	}
 }
 
+// The page builds its controls from what this serves, so these three are the whole
+// contract between the config and the browser.
+func TestDocServesTheSchema(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "SKILL.md")
+	if err := os.WriteFile(path, []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Fields:  []config.Field{{Name: "severity", Label: "How bad", Values: []string{"blocker", "nit"}, Default: "nit"}},
+		Updater: config.Updater{Name: "my-updater"},
+	}
+	s, err := New(cfg, path, filepath.Join(dir, "out"), "olly")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := getDoc(t, s)
+
+	if len(d.Fields) != 1 || d.Fields[0].Name != "severity" || d.Fields[0].Label != "How bad" {
+		t.Errorf("fields = %+v; want the configured one", d.Fields)
+	}
+	if d.Updater != "my-updater" {
+		t.Errorf("updater = %q; the Submit button label comes from this", d.Updater)
+	}
+
+	start, end := offsetOf(t, fixture, "never push")
+	post(t, s, "/api/anchor", anchorRequest{Rev: d.Rev, Start: start, End: end, Quote: "never push", Body: "x"})
+	id := getDoc(t, s).Threads[0].ID
+
+	t.Run("a configured field is written flat onto the thread", func(t *testing.T) {
+		got := decodeDoc(t, post(t, s, "/api/thread", threadRequest{
+			Rev: getDoc(t, s).Rev, ID: id, Fields: map[string]string{"severity": "blocker"},
+		}))
+		if got.Threads[0].Fields["severity"] != "blocker" {
+			t.Errorf("fields = %+v", got.Threads[0].Fields)
+		}
+		if !strings.Contains(string(mustRead(t, path)), `"severity":"blocker"`) {
+			t.Error("the field did not reach the file")
+		}
+	})
+
+	// A page left open across a config change must not be able to write a key the
+	// payload will never carry.
+	t.Run("a field that is not configured is ignored", func(t *testing.T) {
+		got := decodeDoc(t, post(t, s, "/api/thread", threadRequest{
+			Rev: getDoc(t, s).Rev, ID: id, Fields: map[string]string{"priority": "high"},
+		}))
+		if _, ok := got.Threads[0].Fields["priority"]; ok {
+			t.Errorf("accepted an unconfigured field: %+v", got.Threads[0].Fields)
+		}
+	})
+}
+
 func TestAnchorWritesToDisk(t *testing.T) {
 	s, path := newTestServer(t)
 	start, end := offsetOf(t, fixture, "never push")
@@ -121,7 +178,7 @@ func TestAnchorWritesToDisk(t *testing.T) {
 		t.Fatalf("got %d threads; want 1", len(d.Threads))
 	}
 	thread := d.Threads[0]
-	if thread.Quote != "never push" || thread.Priority != "" {
+	if thread.Quote != "never push" || len(thread.Fields) != 0 {
 		t.Errorf("thread = %+v", thread)
 	}
 	if len(thread.Comments) != 1 || thread.Comments[0].Author != "olly" || thread.Comments[0].TS == "" {
@@ -203,8 +260,8 @@ func TestThreadLifecycle(t *testing.T) {
 	})
 
 	t.Run("change category without touching the rest", func(t *testing.T) {
-		d := decodeDoc(t, post(t, s, "/api/thread", threadRequest{Rev: getDoc(t, s).Rev, ID: id, Category: "examples"}))
-		if d.Threads[0].Category != "examples" || d.Threads[0].Status != "resolved" {
+		d := decodeDoc(t, post(t, s, "/api/thread", threadRequest{Rev: getDoc(t, s).Rev, ID: id, Fields: map[string]string{"category": "examples"}}))
+		if d.Threads[0].Fields["category"] != "examples" || d.Threads[0].Status != "resolved" {
 			t.Errorf("thread = %+v", d.Threads[0])
 		}
 	})
@@ -239,25 +296,32 @@ func comment(t *testing.T, s *Server, passage, body string) {
 	}
 }
 
-func submit(t *testing.T, s *Server) handoffResponse {
+func submit(t *testing.T, s *Server) handoff.Result {
 	t.Helper()
 
 	w := post(t, s, "/api/handoff", struct{}{})
 	if w.Code != http.StatusOK {
 		t.Fatalf("handoff = %d: %s", w.Code, w.Body)
 	}
-	var got handoffResponse
+	var got handoff.Result
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode handoff: %v", err)
 	}
 	return got
 }
 
+// Mirrors the unexported shape handoff writes, so a change to it is caught here.
+type pendingFile struct {
+	handoff.Payload
+	Prompt  string `json:"prompt"`
+	Archive string `json:"archive"`
+}
+
 func readPendingFile(t *testing.T, s *Server) pendingFile {
 	t.Helper()
 
 	var p pendingFile
-	if err := json.Unmarshal(mustRead(t, filepath.Join(s.outDir, pendingName)), &p); err != nil {
+	if err := json.Unmarshal(mustRead(t, filepath.Join(s.outDir, handoff.PendingName)), &p); err != nil {
 		t.Fatalf("decode pending: %v", err)
 	}
 	return p
@@ -277,7 +341,7 @@ func mustRead(t *testing.T, path string) []byte {
 func archive(t *testing.T, s *Server) {
 	t.Helper()
 
-	if err := os.Rename(filepath.Join(s.outDir, pendingName), readPendingFile(t, s).Archive); err != nil {
+	if err := os.Rename(filepath.Join(s.outDir, handoff.PendingName), readPendingFile(t, s).Archive); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 }
@@ -292,13 +356,13 @@ func TestHandoffWritesPending(t *testing.T) {
 	}
 	// A thread never triaged in the sidebar still has to reach skill-updater with a
 	// priority and category it accepts.
-	if s := got.Payload.Suggestions[0]; s.ID == "" || s.Priority != "medium" || s.Category != "instructions" || s.ExpectedImpact == "" {
+	if s := got.Payload.Suggestions[0]; s.ID == "" || s.Fields["priority"] != "medium" || s.Fields["category"] != "instructions" || s.ExpectedImpact == "" {
 		t.Errorf("untriaged suggestion = %+v", s)
 	}
 	if got.Payload.SkillName != "example-skill" || got.Payload.SkillPath != s.Path() {
 		t.Errorf("payload header = %+v", got.Payload)
 	}
-	if got.File != filepath.Join(s.outDir, pendingName) {
+	if got.File != filepath.Join(s.outDir, handoff.PendingName) {
 		t.Errorf("wrote %q; want the flat pending file under %q", got.File, s.outDir)
 	}
 
@@ -326,7 +390,7 @@ func TestHandoffSkipsArchived(t *testing.T) {
 	if len(empty.Payload.Suggestions) != 0 {
 		t.Fatalf("archived thread came back: %+v", empty.Payload.Suggestions)
 	}
-	if _, err := os.Stat(filepath.Join(s.outDir, pendingName)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(s.outDir, handoff.PendingName)); !os.IsNotExist(err) {
 		t.Errorf("pending file survived with nothing pending: %v", err)
 	}
 
@@ -345,10 +409,10 @@ func TestHandoffReflectsRetriage(t *testing.T) {
 	comment(t, s, "never push", "explain the failure mode")
 	id := submit(t, s).Payload.Suggestions[0].ID
 
-	post(t, s, "/api/thread", threadRequest{Rev: getDoc(t, s).Rev, ID: id, Priority: "high"})
+	post(t, s, "/api/thread", threadRequest{Rev: getDoc(t, s).Rev, ID: id, Fields: map[string]string{"priority": "high"}})
 
 	got := submit(t, s)
-	if got.Payload.Suggestions[0].Priority != "high" || !got.Changed {
+	if got.Payload.Suggestions[0].Fields["priority"] != "high" || !got.Changed {
 		t.Errorf("retriage did not reach pending: %+v changed=%v", got.Payload.Suggestions[0], got.Changed)
 	}
 }
@@ -358,7 +422,7 @@ func TestHandoffSkipsUnchangedWrite(t *testing.T) {
 	comment(t, s, "never push", "explain the failure mode")
 	submit(t, s)
 
-	before, err := os.Stat(filepath.Join(s.outDir, pendingName))
+	before, err := os.Stat(filepath.Join(s.outDir, handoff.PendingName))
 	if err != nil {
 		t.Fatalf("stat pending: %v", err)
 	}
@@ -367,7 +431,7 @@ func TestHandoffSkipsUnchangedWrite(t *testing.T) {
 	if got.Changed {
 		t.Errorf("second submit reported a change with nothing edited")
 	}
-	after, err := os.Stat(filepath.Join(s.outDir, pendingName))
+	after, err := os.Stat(filepath.Join(s.outDir, handoff.PendingName))
 	if err != nil {
 		t.Fatalf("stat pending: %v", err)
 	}

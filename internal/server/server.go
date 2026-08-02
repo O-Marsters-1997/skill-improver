@@ -7,7 +7,6 @@
 package server
 
 import (
-	"bytes"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -17,15 +16,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/O-Marsters-1997/improve-skills/internal/comments"
+	"github.com/O-Marsters-1997/improve-skills/internal/config"
 	"github.com/O-Marsters-1997/improve-skills/internal/handoff"
 	"github.com/O-Marsters-1997/improve-skills/internal/render"
+	"github.com/O-Marsters-1997/improve-skills/internal/skill"
 )
 
 //go:embed web
@@ -35,11 +35,12 @@ type Server struct {
 	path      string
 	outDir    string
 	author    string
+	cfg       *config.Config
 	mux       *http.ServeMux
 	writeFile sync.Mutex // ponytail: one lock for the whole file; this serves one reviewer
 }
 
-func New(path, outDir, author string) (*Server, error) {
+func New(cfg *config.Config, path, outDir, author string) (*Server, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("server: resolve %s: %w", path, err)
@@ -55,7 +56,7 @@ func New(path, outDir, author string) (*Server, error) {
 		return nil, fmt.Errorf("server: resolve %s: %w", outDir, err)
 	}
 
-	s := &Server{path: absolute, outDir: out, author: author, mux: http.NewServeMux()}
+	s := &Server{path: absolute, outDir: out, author: author, cfg: cfg, mux: http.NewServeMux()}
 
 	assets, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -74,12 +75,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.Serve
 
 func (s *Server) Path() string { return s.path }
 
+// Fields and Updater are served rather than baked into the page, so the browser cannot
+// drift from the schema the payload is built against.
 type doc struct {
 	Name    string            `json:"name"`
 	Path    string            `json:"path"`
 	Rev     string            `json:"rev"`
 	HTML    string            `json:"html"`
 	Threads []comments.Thread `json:"threads"`
+	Fields  []config.Field    `json:"fields"`
+	Updater string            `json:"updater"`
 }
 
 func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
@@ -127,13 +132,12 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 }
 
 type threadRequest struct {
-	Rev      string `json:"rev"`
-	ID       string `json:"id"`
-	Body     string `json:"body"`
-	Status   string `json:"status"`
-	Priority string `json:"priority"`
-	Category string `json:"category"`
-	Impact   string `json:"impact"`
+	Rev    string            `json:"rev"`
+	ID     string            `json:"id"`
+	Body   string            `json:"body"`
+	Status string            `json:"status"`
+	Fields map[string]string `json:"fields"`
+	Impact string            `json:"impact"`
 }
 
 // Fields are patched, not replaced: an empty field in the request is left alone.
@@ -158,9 +162,18 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
 				t.Comments = append(t.Comments, s.newComment(id, parent, body))
 			}
 			setIfGiven(&t.Status, req.Status)
-			setIfGiven(&t.Priority, req.Priority)
-			setIfGiven(&t.Category, req.Category)
 			setIfGiven(&t.Impact, req.Impact)
+			// Only configured fields are accepted, so a stale page cannot write a
+			// key the payload will not carry.
+			for name, value := range req.Fields {
+				if _, ok := s.cfg.Field(name); !ok || value == "" {
+					continue
+				}
+				if t.Fields == nil {
+					t.Fields = map[string]string{}
+				}
+				t.Fields[name] = value
+			}
 			return comments.Upsert(src, t)
 		}
 		return nil, fmt.Errorf("server: thread %q: %w", req.ID, comments.ErrNotFound)
@@ -178,28 +191,8 @@ func (s *Server) handleThreadDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type handoffResponse struct {
-	File    string          `json:"file"`
-	Prompt  string          `json:"prompt"`
-	Changed bool            `json:"changed"`
-	Payload handoff.Payload `json:"payload"`
-}
-
-// The embedded payload flattens, so the file stays a superset of what skill-updater
-// reads: the prompt and its archive target ride along rather than living only in a
-// browser toast.
-type pendingFile struct {
-	handoff.Payload
-	Prompt  string `json:"prompt"`
-	Archive string `json:"archive"`
-}
-
-const pendingName = "pending.json"
-
-// Pending is regenerated from the document every time rather than appended to, so a
-// thread that was retriaged, replied to, resolved or deleted since the last submit is
-// reflected. Only threads already moved to an archive file are excluded, which is what
-// stops skill-updater being handed the same suggestion twice.
+// Everything below the lock lives in handoff.Submit, so the browser's Submit button and
+// the handoff subcommand cannot produce different payloads.
 func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	s.writeFile.Lock()
 	defer s.writeFile.Unlock()
@@ -209,103 +202,17 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	threads, err := comments.Threads(src)
+
+	result, err := handoff.Submit(s.cfg, s.outDir, s.path, src)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-
-	if err := os.MkdirAll(s.outDir, 0o755); err != nil {
-		writeError(w, fmt.Errorf("server: create %s: %w", s.outDir, err))
-		return
-	}
-
-	file := filepath.Join(s.outDir, pendingName)
-	archived := s.archivedIDs()
-	payload := handoff.Build(threads, handoff.SkillName(src), s.path)
-	payload.Suggestions = slices.DeleteFunc(payload.Suggestions, func(sug handoff.Suggestion) bool {
-		return archived[sug.ID]
-	})
-
-	if len(payload.Suggestions) == 0 {
-		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
-			writeError(w, fmt.Errorf("server: remove %s: %w", file, err))
-			return
-		}
-		writeJSON(w, http.StatusOK, handoffResponse{Payload: payload})
-		return
-	}
-
-	// Reusing the archive name already recorded keeps a prompt copied earlier valid,
-	// and lets an unchanged pending file compare equal.
-	archive := s.readPending().Archive
-	if archive == "" {
-		archive = filepath.Join(s.outDir, fmt.Sprintf("handoff-%s-%s.json",
-			or(payload.SkillName, "skill"), time.Now().UTC().Format("20060102T150405Z")))
-	}
-	prompt := fmt.Sprintf(
-		"Use skill-updater with the payload in %s\n\n"+
-			"Once applied, archive it so these suggestions are not handed off again:\nmv %s %s",
-		file, file, archive)
-
-	body, err := json.MarshalIndent(pendingFile{Payload: payload, Prompt: prompt, Archive: archive}, "", "  ")
-	if err != nil {
-		writeError(w, fmt.Errorf("server: encode payload: %w", err))
-		return
-	}
-
-	changed := true
-	if existing, err := os.ReadFile(file); err == nil {
-		changed = !bytes.Equal(existing, body)
-	}
-	if changed {
-		if err := os.WriteFile(file, body, 0o644); err != nil {
-			writeError(w, fmt.Errorf("server: write %s: %w", file, err))
-			return
-		}
+	if result.Changed {
 		// The terminal is the one surface a failed clipboard write cannot take away.
-		log.Printf("handoff: %s", prompt)
+		log.Printf("handoff: %s", result.Prompt)
 	}
-
-	writeJSON(w, http.StatusOK, handoffResponse{File: file, Prompt: prompt, Changed: changed, Payload: payload})
-}
-
-func (s *Server) readPending() pendingFile {
-	var p pendingFile
-	if body, err := os.ReadFile(filepath.Join(s.outDir, pendingName)); err == nil {
-		_ = json.Unmarshal(body, &p)
-	}
-	return p
-}
-
-// Every thread already moved into an archive file. One that will not decode is skipped
-// rather than fatal — but noisily, since ignoring it silently would let an
-// already-applied suggestion come back.
-func (s *Server) archivedIDs() map[string]bool {
-	ids := map[string]bool{}
-	entries, err := filepath.Glob(filepath.Join(s.outDir, "*.json"))
-	if err != nil {
-		log.Printf("handoff: cannot list %s: %v", s.outDir, err)
-		return ids
-	}
-	for _, entry := range entries {
-		if filepath.Base(entry) == pendingName {
-			continue
-		}
-		var payload handoff.Payload
-		body, err := os.ReadFile(entry)
-		if err == nil {
-			err = json.Unmarshal(body, &payload)
-		}
-		if err != nil {
-			log.Printf("handoff: skipping %s: %v", entry, err)
-			continue
-		}
-		for _, suggestion := range payload.Suggestions {
-			ids[suggestion.ID] = true
-		}
-	}
-	return ids
+	writeJSON(w, http.StatusOK, result)
 }
 
 // The write is refused if the file changed since the client last read it.
@@ -356,11 +263,13 @@ func (s *Server) respond(w http.ResponseWriter, src []byte, rev string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, doc{
-		Name:    handoff.SkillName(src),
+		Name:    skill.Name(src),
 		Path:    s.path,
 		Rev:     rev,
 		HTML:    string(html),
 		Threads: threads,
+		Fields:  s.cfg.Fields,
+		Updater: s.cfg.Updater.Name,
 	})
 }
 
@@ -465,11 +374,4 @@ func setIfGiven(field *string, value string) {
 	if value != "" {
 		*field = value
 	}
-}
-
-func or(value, fallback string) string {
-	if value == "" {
-		return fallback
-	}
-	return value
 }

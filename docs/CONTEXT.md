@@ -1,11 +1,16 @@
 # Context
 
 `skill-review` renders a SKILL.md as a page you can highlight and comment on, then hands
-the comments to the `skill-updater` skill, which edits the skill in its source repo and
-opens a draft PR.
+the comments to a skill that applies them — for the author, `skill-updater`, which edits
+the skill in its source repo and opens a draft PR.
+
+What the review asks for and who receives it are configured, not compiled in: the triage
+fields and the updater skill come from a TOML file, and the built-in defaults are what the
+tool hardcoded before it had one.
 
 ```
 skill-review path/to/SKILL.md      # serves http://localhost:8420
+skill-review config init           # write the defaults out to edit
 go test ./...
 ```
 
@@ -22,9 +27,10 @@ into the SKILL.md the moment it is made, and Submit is a pure function of what i
 on disk. A failed submit loses nothing; click it again.
 
 Because the comments live in the file, they can also be collected without this tool at all.
-The `/skill-comments` slash command reads the threads straight out of a SKILL.md and calls
-`skill-updater` with the same payload — a second, independent path, so a broken button is
-never a dead end.
+`skill-review handoff path/to/SKILL.md` prints the payload and prompt with no server
+involved, and the `/skill-comments` slash command is a thin wrapper over it. That path runs
+the same `handoff.Submit` the button does rather than reimplementing it, so a broken button
+is never a dead end and the two can never disagree about the schema.
 
 Two non-goals, both deliberate. There is no editor — you review, Claude writes, so a
 rendered view you can highlight is the whole requirement. And there is no eval harness;
@@ -58,12 +64,20 @@ offset in `data-o`. Offsets are **bytes**, not characters — the browser conver
 last read; a mismatch means the file changed underneath it, so the write is refused with
 409 and the page reloads. This is what stops an edit made in the editor from being clobbered.
 
-**Suggestion** and **payload** — `skill-updater`'s vocabulary, not ours. A thread becomes one
-suggestion carrying the thread's `id`, a `priority`, a `category`, the suggestion text and an
-`expected_impact`; the payload is the set of them plus the skill's name and path. The
-composer asks for none of that: priority and category are set on the thread cards, where
-every other thread is in view, because ranking one comment against nothing is not a
-judgement anyone can make. Untouched threads default to `medium`/`instructions`.
+**Field** — one unit of triage: a name, a label, a list of values and a default, declared in
+the config. Each one is a control on every thread card and a key on every suggestion, so the
+config is the single description of both. Fields are stored **flat** on the thread rather
+than nested under a key of their own, which is what lets a file written under a different
+schema still parse. A value whose field has since been removed is kept in the file and
+simply not offered. The defaults are `priority` (high/medium/low) and `category`
+(instructions, tools, examples, error_handling, structure, references).
+
+**Suggestion** and **payload** — the updater's vocabulary, not ours. A thread becomes one
+suggestion carrying the thread's `id`, one key per field, the suggestion text and an
+`expected_impact`; the payload is the set of them plus the skill's name and path, ordered by
+the first field in the order its values are listed. The composer asks for none of it: fields
+are set on the thread cards, where every other thread is in view, because ranking one
+comment against nothing is not a judgement anyone can make.
 
 **Pending** and **archive** — `.skill-review/pending.json` holds every open thread that has
 not yet been handed off. It is regenerated on each Submit, so a retriage, a reply or a
@@ -79,10 +93,14 @@ local record and is never handed off again.
 | --- | --- |
 | `internal/comments` | the mc format — parse, anchor, upsert, remove |
 | `internal/render` | Markdown → HTML with byte offsets stamped on every run |
-| `internal/handoff` | threads → `skill-updater` payload |
+| `internal/config` | the TOML file — fields, updater, defaults, validation |
+| `internal/skill` | the `name:` in a SKILL.md's frontmatter |
+| `internal/handoff` | threads → payload (`Build`), and payload → disk (`Submit`) |
 | `internal/server` | the routes, the file lock, the embedded page |
 
-The first three are pure and table-tested; that is the reason this is Go rather than another
-TypeScript extension. Anchoring is the part that goes wrong in every tool of this kind, so it
+`comments`, `render`, `config` and `handoff.Build` are pure and table-tested; that is the
+reason this is Go rather than another TypeScript extension. `handoff.Submit` is the one
+exception, and it is deliberate: the browser and the `handoff` subcommand share it so that
+neither can produce a payload the other would not. Anchoring is the part that goes wrong in every tool of this kind, so it
 carries a fuzz test asserting one property: every rendered run's text is exactly the source
 bytes at the offset it advertises.

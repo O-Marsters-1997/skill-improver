@@ -7,7 +7,9 @@ const toast = document.getElementById("toast");
 const selectionMenu = document.getElementById("selection-menu");
 const handoffPanel = document.getElementById("handoff");
 
-const state = { rev: null, threads: [], pending: null, selected: null };
+// fields comes from the server, so the controls here and the payload the server builds
+// can never describe different schemas.
+const state = { rev: null, threads: [], fields: [], pending: null, selected: null };
 
 const encoder = new TextEncoder();
 const byteLength = (text) => encoder.encode(text).length;
@@ -165,11 +167,18 @@ function threadCard(thread) {
   }
 
   const meta = element("div", { className: "row" });
-  meta.append(
-    element("span", {}, element("label", { textContent: "Priority" }), select("priority", thread.priority || "medium", ["high", "medium", "low"])),
-    element("span", {}, element("label", { textContent: "Category" }), select("category", thread.category || "instructions", ["instructions", "tools", "examples", "error_handling", "structure", "references"])),
-  );
-  card.append(meta);
+  for (const field of state.fields) {
+    meta.append(
+      element(
+        "span",
+        {},
+        element("label", { textContent: field.label }),
+        // Fields ride flat on the thread, the same way they are stored in the file.
+        select(field.name, thread[field.name] || field.default, field.values),
+      ),
+    );
+  }
+  if (meta.children.length > 0) card.append(meta);
 
   card.append(element("textarea", { className: "reply", rows: 2, placeholder: "Reply…" }));
   card.append(
@@ -192,7 +201,11 @@ function threadCard(thread) {
 function draw(payload) {
   state.rev = payload.rev;
   state.threads = payload.threads ?? [];
+  state.fields = payload.fields ?? [];
 
+  document.getElementById("submit-all").textContent = payload.updater
+    ? `Submit all to ${payload.updater}`
+    : "Submit all";
   document.getElementById("skill-name").textContent = payload.name || "skill-review";
   document.getElementById("skill-path").textContent = payload.path;
   document.title = payload.name ? `${payload.name} — skill-review` : "skill-review";
@@ -301,7 +314,7 @@ threadList.addEventListener("change", (event) => {
   if (!field) return;
   const id = event.target.closest(".thread").dataset.id;
   run(async () => {
-    draw(await api("/api/thread", { rev: state.rev, id, [field]: event.target.value }));
+    draw(await api("/api/thread", { rev: state.rev, id, fields: { [field]: event.target.value } }));
   });
 });
 

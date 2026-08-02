@@ -1,7 +1,9 @@
 package comments
 
 import (
+	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 )
@@ -171,7 +173,7 @@ func TestThreads(t *testing.T) {
 		if len(got) != 2 {
 			t.Fatalf("got %d threads; want 2", len(got))
 		}
-		if got[0].ID != "aaa" || got[0].Priority != "high" || got[0].Category != "instructions" {
+		if got[0].ID != "aaa" || got[0].Fields["priority"] != "high" || got[0].Fields["category"] != "instructions" {
 			t.Errorf("first thread = %+v", got[0])
 		}
 		if len(got[0].Comments) != 1 || got[0].Comments[0].Body != "tighten this" {
@@ -179,6 +181,38 @@ func TestThreads(t *testing.T) {
 		}
 		if got[1].Status != "resolved" {
 			t.Errorf("second thread status = %q; want resolved", got[1].Status)
+		}
+	})
+
+	// The fields are flat on the thread object rather than nested, which is what lets a
+	// file written before the schema was configurable keep working.
+	t.Run("any string key that is not a fixed one is a field", func(t *testing.T) {
+		line := `{"id":"aaa","quote":"one","status":"open","comments":[],"severity":"blocker","some_other_tool":"x"}`
+		src := threadsBegin + "\n<!--mc:t " + line + "-->\n" + threadsEnd + "\n"
+
+		got, err := Threads([]byte(src))
+		if err != nil {
+			t.Fatalf("Threads: %v", err)
+		}
+		want := map[string]string{"severity": "blocker", "some_other_tool": "x"}
+		if !maps.Equal(got[0].Fields, want) {
+			t.Errorf("fields = %+v; want %+v", got[0].Fields, want)
+		}
+	})
+
+	t.Run("a thread line round-trips byte-identically", func(t *testing.T) {
+		line := `{"id":"aaa","quote":"one","status":"open","comments":[{"id":"c1","author":"olly","ts":"2026-08-02T10:00:00Z","body":"tighten this"}],"category":"instructions","impact":"clearer","priority":"high"}`
+
+		var got Thread
+		if err := json.Unmarshal([]byte(line), &got); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		back, err := json.Marshal(got)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if string(back) != line {
+			t.Errorf("round trip changed the line:\n got %s\nwant %s", back, line)
 		}
 	})
 
@@ -196,8 +230,7 @@ func TestUpsert(t *testing.T) {
 		Quote:    "never push",
 		Status:   "open",
 		Comments: []Comment{{ID: "c1", Author: "olly", TS: "2026-08-02T10:00:00Z", Body: "say why"}},
-		Priority: "high",
-		Category: "instructions",
+		Fields:   map[string]string{"priority": "high", "category": "instructions"},
 	}
 
 	t.Run("creates the block when absent", func(t *testing.T) {
@@ -212,7 +245,7 @@ func TestUpsert(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Threads: %v", err)
 		}
-		if len(round) != 1 || round[0].ID != "aaa" || round[0].Priority != "high" {
+		if len(round) != 1 || round[0].ID != "aaa" || round[0].Fields["priority"] != "high" {
 			t.Errorf("round trip lost data: %+v", round)
 		}
 	})

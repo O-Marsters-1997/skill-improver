@@ -204,8 +204,19 @@ aside {
   display: flex;
   gap: 0.5rem;
   align-items: baseline;
-  padding: 0.2rem 0;
+  padding: 0.2rem 0.4rem;
+  border-radius: 5px;
   font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.file:hover {
+  background: var(--line);
+}
+
+.file.selected {
+  background: var(--line);
+  font-weight: 600;
 }
 
 .file .name {

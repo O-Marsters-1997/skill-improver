@@ -10,11 +10,12 @@ const fileList = document.getElementById("file-list");
 const filterNote = document.getElementById("file-filter-note");
 
 // fields comes from the server, so the controls here and the payload the server builds
-// can never describe different schemas.
+// can never describe different schemas. revs is keyed by file: an edit made in the editor
+// to one document must not lock the reviewer out of the others.
 //
 // filter decides which rows the explorer draws and nothing else. No request carries it,
 // which is what stops it changing what Submit ships — keep it out of every payload.
-const state = { rev: null, threads: [], fields: [], files: [], filter: "markdown", pending: null, selected: null };
+const state = { file: null, revs: {}, threads: [], fields: [], files: [], filter: "markdown", pending: null, selected: null };
 
 const MARKDOWN = new Set([".md", ".markdown"]);
 const shown = (file) => state.filter === "all" || MARKDOWN.has(file.ext);
@@ -31,12 +32,18 @@ async function api(path, body) {
   const payload = await response.json();
   if (!response.ok) {
     if (response.status === 409) {
-      await load();
+      await load(state.file);
       throw new Error("The file changed on disk, so the page reloaded. Nothing was lost — try again.");
     }
     throw new Error(payload.error || `Request failed (${response.status})`);
   }
   return payload;
+}
+
+// The file list is redrawn with every mutation, because a thread count may just have moved.
+async function apply(path, body) {
+  draw(await api(path, { file: state.file, rev: state.revs[state.file], ...body }));
+  await loadFiles();
 }
 
 function say(message, isError) {
@@ -207,7 +214,8 @@ function threadCard(thread) {
 }
 
 function draw(payload) {
-  state.rev = payload.rev;
+  state.file = payload.rel;
+  state.revs[payload.rel] = payload.rev;
   state.threads = payload.threads ?? [];
   state.fields = payload.fields ?? [];
 
@@ -229,9 +237,6 @@ function draw(payload) {
   document.getElementById("empty").hidden = state.threads.length > 0;
   highlight(state.selected);
   hideSelectionMenu();
-  // Refetched rather than counted from state.threads: the badge has to be the number that
-  // would ship, and only the server applies those rules.
-  run(loadFiles);
 }
 
 function highlight(id) {
@@ -256,7 +261,7 @@ function drawFiles() {
     ...state.files.filter(shown).map((file) =>
       element(
         "li",
-        { className: "file" },
+        { className: `file${file.rel === state.file ? " selected" : ""}`, dataset: { rel: file.rel } },
         element("span", { className: "name", textContent: file.rel }),
         file.threads > 0 ? element("span", { className: "count", textContent: String(file.threads) }) : null,
       ),
@@ -273,14 +278,23 @@ async function loadFiles() {
   drawFiles();
 }
 
-async function load() {
-  draw(await api("/api/doc"));
+async function load(file) {
+  // A thread id selected in the file being left means nothing in the one arriving.
+  if (file !== state.file) state.selected = null;
+  draw(await api(`/api/doc${file ? `?file=${encodeURIComponent(file)}` : ""}`));
+  await loadFiles();
 }
 
 // Redrawing only — nothing here may reach the server.
 document.getElementById("file-filter").addEventListener("change", (event) => {
   state.filter = event.target.value;
   drawFiles();
+});
+
+fileList.addEventListener("click", (event) => {
+  const row = event.target.closest(".file[data-rel]");
+  if (!row || row.dataset.rel === state.file) return;
+  run(() => load(row.dataset.rel));
 });
 
 doc.addEventListener("mouseup", () => setTimeout(captureSelection, 0));
@@ -312,7 +326,7 @@ composer.addEventListener("submit", (event) => {
   if (!body || !state.pending) return;
 
   run(async () => {
-    draw(await api("/api/anchor", { rev: state.rev, ...state.pending, body }));
+    await apply("/api/anchor", { ...state.pending, body });
     closeComposer();
     window.getSelection()?.removeAllRanges();
     say("Comment saved to the file.");
@@ -338,19 +352,19 @@ threadList.addEventListener("click", (event) => {
 
   run(async () => {
     if (action === "delete") {
-      draw(await api("/api/thread/delete", { rev: state.rev, id }));
+      await apply("/api/thread/delete", { id });
       say("Thread removed.");
       return;
     }
     if (action === "status") {
       const status = card.classList.contains("resolved") ? "open" : "resolved";
-      draw(await api("/api/thread", { rev: state.rev, id, status }));
+      await apply("/api/thread", { id, status });
       return;
     }
     const reply = card.querySelector(".reply");
     const body = reply.value.trim();
     if (!body) return;
-    draw(await api("/api/thread", { rev: state.rev, id, body }));
+    await apply("/api/thread", { id, body });
     say("Reply saved to the file.");
   });
 });
@@ -360,7 +374,7 @@ threadList.addEventListener("change", (event) => {
   if (!field) return;
   const id = event.target.closest(".thread").dataset.id;
   run(async () => {
-    draw(await api("/api/thread", { rev: state.rev, id, fields: { [field]: event.target.value } }));
+    await apply("/api/thread", { id, fields: { [field]: event.target.value } });
   });
 });
 
@@ -410,4 +424,4 @@ async function copyPrompt() {
 document.getElementById("handoff-copy").addEventListener("click", () => copyPrompt());
 document.getElementById("handoff-close").addEventListener("click", () => (handoffPanel.hidden = true));
 
-run(load);
+run(() => load());

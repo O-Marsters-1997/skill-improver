@@ -1,7 +1,9 @@
-// Command skill-review serves a SKILL.md as a page you can highlight and comment on,
-// and hands the comments to a skill that applies them.
+// Command skill-review serves a Markdown file — or every reviewable file in a skill
+// directory — as a page you can highlight and comment on, and hands the comments to a
+// skill that applies them.
 //
 //	skill-review path/to/SKILL.md
+//	skill-review ~/.claude/skills/ideate
 //	→ http://127.0.0.1:8420
 package main
 
@@ -35,7 +37,7 @@ func main() {
 func command() *cli.Command {
 	return &cli.Command{
 		Name:           "skill-review",
-		Usage:          "review a SKILL.md and hand the comments to the skill that applies them",
+		Usage:          "review a file or a skill directory and hand the comments to the skill that applies them",
 		DefaultCommand: "serve",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -101,7 +103,7 @@ func resolveSkill(cmd *cli.Command, target string) (string, error) {
 func serveCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "serve",
-		Usage:     "serve a document for review (the default command)",
+		Usage:     "serve a file, or a whole skill directory, for review (the default command)",
 		ArgsUsage: "<target>",
 		Arguments: []cli.Argument{&cli.StringArg{Name: "target"}},
 		Action:    serve,
@@ -137,7 +139,6 @@ func serve(_ context.Context, cmd *cli.Command) error {
 		return err
 	}
 	log.Printf("reviewing %s\nediting   %s\nserving   %s", reviewer.Path(), reviewer.Skill(), browsableURL(ln.Addr().String()))
-
 
 	srv := &http.Server{
 		Handler:           reviewer,

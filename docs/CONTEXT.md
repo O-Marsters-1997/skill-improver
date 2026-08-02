@@ -135,7 +135,7 @@ local record and is never handed off again.
 | `internal/config` | the TOML file — fields, updater, defaults, validation |
 | `internal/skill` | the `name:` in a SKILL.md's frontmatter, and directory → SKILL.md |
 | `internal/handoff` | threads → payload (`Build`), and payload → disk (`Submit`) |
-| `internal/server` | the routes, the file lock, the embedded page |
+| `internal/server` | discovery, the routes, the write lock, the embedded page |
 
 `comments`, `render`, `config` and `handoff.Build` are pure and table-tested; that is the
 reason this is Go rather than another TypeScript extension. `handoff.Submit` is the one

@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/urfave/cli/v3"
 
 	"github.com/O-Marsters-1997/improve-skills/internal/handoff"
+	"github.com/O-Marsters-1997/improve-skills/internal/server"
 )
 
 // The backstop path. It goes through the same handoff.Submit the Submit button does, so a
@@ -17,7 +17,7 @@ import (
 func handoffCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "handoff",
-		Usage:     "collect the comments in a document into a payload, without serving anything",
+		Usage:     "collect the comments in a file or directory into a payload, without serving anything",
 		ArgsUsage: "<target>",
 		Arguments: []cli.Argument{&cli.StringArg{Name: "target"}},
 		Action:    handoffAction,
@@ -30,10 +30,6 @@ func handoffAction(_ context.Context, cmd *cli.Command) error {
 		return cli.Exit("usage: skill-review handoff <target>", 2)
 	}
 	path, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	src, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -51,7 +47,16 @@ func handoffAction(_ context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	result, err := handoff.Submit(cfg, outDir, skillPath, []handoff.Doc{{Path: path, Src: src}})
+	root, files, err := server.Discover(path, outDir)
+	if err != nil {
+		return err
+	}
+	docs, err := server.Docs(root, files)
+	if err != nil {
+		return err
+	}
+
+	result, err := handoff.Submit(cfg, outDir, skillPath, docs)
 	if err != nil {
 		return err
 	}

@@ -30,6 +30,20 @@ func Resolve(path string) (skillMD string, err error) {
 	return abs, nil
 }
 
+// NameAt is Name against a path rather than bytes, for the callers that hold a skill
+// rather than a document: an unreadable file is nameless, not an error.
+func NameAt(path string) string {
+	skillMD, err := Resolve(path)
+	if err != nil {
+		return ""
+	}
+	src, err := os.ReadFile(skillMD)
+	if err != nil {
+		return ""
+	}
+	return Name(src)
+}
+
 var frontmatterName = regexp.MustCompile(`(?m)^name:[ \t]*["']?([^"'\r\n]+?)["']?[ \t]*$`)
 
 // A YAML parser would be a dependency earned by exactly one field.

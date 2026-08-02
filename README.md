@@ -1,11 +1,13 @@
 # skill-review
 
-A local web UI for reviewing a Markdown document: highlight a passage, leave a comment,
-triage it, and hand the whole set off to the skill that applies them in one click. Comments
-are written straight into the file as you make them, so there is no in-memory review state
-to lose — the file on disk is the only state.
+A local web UI for reviewing a skill: highlight a passage, leave a comment, triage it, and
+hand the whole set off to the skill that applies them in one click. Point it at a single
+Markdown or HTML file, or at a whole skill directory — a directory serves every reviewable
+file behind a file list, and Submit produces one payload spanning all of them. Comments are
+written straight into the file as you make them, so there is no in-memory review state to
+lose — the file on disk is the only state.
 
-The document is usually a skill's own `SKILL.md`. It does not have to be: `--skill` points
+The target is usually a skill's own `SKILL.md`. It does not have to be: `--skill` points
 the payload at a *different* skill, so you can review something a skill **produced** and
 have the suggestions land on the instructions that produced it.
 
@@ -45,13 +47,18 @@ reviewing /path/to/testdata/example-SKILL.md
 serving   http://127.0.0.1:8420
 ```
 
-That serves the bundled fixture. To review a real skill — flags and the path both go through
-`just run`:
+That serves the bundled fixture. To review a real skill — flags and the target both go
+through `just run`:
 
 ```
-just run ~/.claude/skills/my-skill/SKILL.md
-just run --addr 127.0.0.1:9000 ~/.claude/skills/my-skill/SKILL.md
+just run ~/.claude/skills/my-skill/SKILL.md          # one file
+just run ~/.claude/skills/my-skill                    # the whole skill
+just run --addr 127.0.0.1:9000 ~/.claude/skills/my-skill
 ```
+
+A directory target is walked recursively for `.md`, `.html` and `.htm` files, skipping
+dotfiles, dot-directories, `node_modules` and the `--out` directory. The sidebar lists what
+it found, with a thread count against each file; click one to switch.
 
 Open `http://127.0.0.1:8420` and try the workflow below against the fixture — it's a
 `SKILL.md` with headings, a fenced code block, a table and a blockquote, built specifically
@@ -94,14 +101,15 @@ just retry.
 usage: skill-review [flags] <target>
 ```
 
-`serve` is the default command, so the bare form above is the same as
-`skill-review serve <target>`. Flags may go before or after the command name; pass them
-through `just run`, or straight to the binary from `just build`.
+`target` is a Markdown or HTML file, or a skill directory. `serve` is the default command, so
+the bare form above is the same as `skill-review serve <target>`. Flags may go before or
+after the command name; pass them through `just run`, or straight to the binary from
+`just build`.
 
 | Command | What it does |
 | ------- | ------------ |
-| `serve <target>` | Serve a document for review. The default — the name is optional |
-| `handoff <target>` | Print the payload and prompt for a document without serving anything. The backstop when the browser is not an option |
+| `serve <target>` | Serve a file, or a whole skill directory, for review. The default — the name is optional |
+| `handoff <target>` | Print the payload and prompt for the whole target without serving anything. The backstop when the browser is not an option |
 | `config init` | Write a config file with the built-in defaults spelled out |
 
 | Flag | Default | Description |
@@ -169,7 +177,8 @@ skill = "/absolute/path/to/skill-updater"
 The fields the config declares are the only ones the sidebar offers and the only ones a
 suggestion carries — the browser builds its controls from what the server serves, so the two
 cannot drift. `id`, `quote`, `status`, `comments` and `impact` are reserved, because fields
-are stored flat on the thread.
+are stored flat on the thread, and so are `file` and `mode`, which the handoff stamps onto
+every suggestion and payload respectively.
 
 A config that will not load is fatal rather than ignored: falling back silently would hand a
 reviewer the wrong controls without saying so. Errors name the file and the key, and a syntax
@@ -181,8 +190,8 @@ and it reappears.
 
 ## Where things are stored
 
-Comments live **inline in the `SKILL.md` itself**, so they survive edits and travel with the
-file in version control:
+Comments live **inline in the reviewed file itself**, so they survive edits and travel with
+it in version control:
 
 - An anchored passage is wrapped in a marker pair: `<!--mc:a:ID-->the passage<!--mc:/a:ID-->`.
 - Every thread (id, quote, status, comments, then its fields and impact) is one
@@ -210,8 +219,10 @@ Clicking **Submit all** writes `pending.json`: `skill_name`, `skill_path`, `mode
 `improvement_suggestions` list, each with the thread's `id`, the absolute `file` it was
 anchored in, one key per [configured field](#configuration), `suggestion` (the comment
 thread text, with the anchored quote appended) and `expected_impact`, sorted by the first
-field. `skill_name` is read from `<skill>/SKILL.md`, so it names the skill being improved
-even when that is not the file you reviewed. `expected_impact` is
+field across the whole review set rather than per file. One Submit covers every file in the
+target, so a directory review produces one payload with several distinct `file` values.
+`skill_name` is read from `<skill>/SKILL.md`, so it names the skill being improved even when
+that is not the file you reviewed. `expected_impact` is
 synthesised from the anchored quote — the UI never asks for it, because an updater derives
 that kind of framing better than a text box collects it.
 
@@ -255,7 +266,7 @@ a dead end.
 
 | Recipe | What it does |
 | ------ | ------------ |
-| `just run [args]` | Serve a `SKILL.md` (defaults to the fixture) |
+| `just run [args]` | Serve a file or skill directory (defaults to the fixture) |
 | `just build` | Build to `bin/skill-review` |
 | `just install` | `go install` the command |
 | `just test [args]` | Run all tests |

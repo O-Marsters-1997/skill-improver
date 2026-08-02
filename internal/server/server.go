@@ -1,5 +1,5 @@
-// Package server exposes one file — a SKILL.md, or any Markdown or HTML the target names
-// — for review over HTTP.
+// Package server exposes a review target — one file, or every reviewable file in a
+// directory — over HTTP.
 //
 // Every mutation is a read-modify-write of the file on disk, and nothing is held in
 // memory between requests. The comment tools this replaces lose work by pushing text
@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,21 +35,22 @@ import (
 //go:embed web
 var webFS embed.FS
 
-// path is the document under review; skill is what the payload edits, which is the same
-// path unless --skill said otherwise.
+// target is the file or directory named on the command line; skill is what the payload
+// edits, which is the same path unless --skill said otherwise.
 type Server struct {
-	path      string
-	skill     string
-	format    comments.Format
+	target    string   // the file or directory named on the command line, absolute
+	skill     string   // absolute
+	root      string   // the directory the review set is relative to
+	files     []string // the review set, relative to root, sorted
 	outDir    string
 	author    string
 	cfg       *config.Config
 	mux       *http.ServeMux
 	newID     func() string
-	writeFile sync.Mutex // ponytail: one lock for the whole file; this serves one reviewer
+	writeFile sync.Mutex // ponytail: one lock for the whole review set; this serves one reviewer
 }
 
-// The target's extension decides its syntax once, here, because two things depend on the
+// A file's extension decides its syntax once, here, because two things depend on the
 // answer — which renderer runs and whether markers may be moved out of a code fence — and
 // they must never disagree.
 func formatOf(path string) comments.Format {
@@ -60,23 +62,20 @@ func formatOf(path string) comments.Format {
 	}
 }
 
-func (s *Server) render(src []byte) ([]byte, error) {
-	if s.format == comments.HTML {
+func renderDoc(format comments.Format, src []byte) ([]byte, error) {
+	if format == comments.HTML {
 		return render.HTMLDoc(src)
 	}
 	return render.HTML(src)
 }
 
-func New(cfg *config.Config, path, skillPath, outDir, author string) (*Server, error) {
-	absolute, err := filepath.Abs(path)
+func New(cfg *config.Config, target, skillPath, outDir, author string) (*Server, error) {
+	absolute, err := filepath.Abs(target)
 	if err != nil {
-		return nil, fmt.Errorf("server: resolve %s: %w", path, err)
-	}
-	if _, err := os.ReadFile(absolute); err != nil {
-		return nil, fmt.Errorf("server: %w", err)
+		return nil, fmt.Errorf("server: resolve %s: %w", target, err)
 	}
 
-	absoluteSkill, err := filepath.Abs(cmp.Or(skillPath, path))
+	absoluteSkill, err := filepath.Abs(cmp.Or(skillPath, target))
 	if err != nil {
 		return nil, fmt.Errorf("server: resolve %s: %w", skillPath, err)
 	}
@@ -88,8 +87,13 @@ func New(cfg *config.Config, path, skillPath, outDir, author string) (*Server, e
 		return nil, fmt.Errorf("server: resolve %s: %w", outDir, err)
 	}
 
+	root, files, err := Discover(absolute, out)
+	if err != nil {
+		return nil, err
+	}
+
 	s := &Server{
-		path: absolute, skill: absoluteSkill, format: formatOf(absolute),
+		target: absolute, skill: absoluteSkill, root: root, files: files,
 		outDir: out, author: author, cfg: cfg, mux: http.NewServeMux(), newID: comments.NewID,
 	}
 
@@ -109,14 +113,99 @@ func New(cfg *config.Config, path, skillPath, outDir, author string) (*Server, e
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
-func (s *Server) Path() string { return s.path }
+// Path is the target as named on the command line, resolved: a directory when the whole
+// skill is under review, the file itself when only one is.
+func (s *Server) Path() string { return s.target }
 
 func (s *Server) Skill() string { return s.skill }
+
+// The formats a review can be held in.
+var reviewable = []string{".md", ".html", ".htm"}
+
+// Discover returns every reviewable file under target, as paths relative to root and
+// sorted, so the explorer and the handoff agree on an order. A file target yields a
+// one-element set, which is what keeps the two cases on one code path.
+func Discover(target, outDir string) (root string, files []string, err error) {
+	info, err := os.Stat(target)
+	if err != nil {
+		return "", nil, fmt.Errorf("server: %w", err)
+	}
+	if !info.IsDir() {
+		return filepath.Dir(target), []string{filepath.Base(target)}, nil
+	}
+
+	err = filepath.WalkDir(target, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			// outDir is skipped by path rather than by name: it is only a dotfile by
+			// default, and --out can put it anywhere.
+			if path != target && (strings.HasPrefix(name, ".") || name == "node_modules" || path == outDir) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(name, ".") || !slices.Contains(reviewable, strings.ToLower(filepath.Ext(name))) {
+			return nil
+		}
+		rel, err := filepath.Rel(target, path)
+		if err != nil {
+			return err
+		}
+		files = append(files, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("server: walk %s: %w", target, err)
+	}
+	if len(files) == 0 {
+		return "", nil, fmt.Errorf("server: %s holds no reviewable files", target)
+	}
+
+	slices.Sort(files)
+	return target, files, nil
+}
+
+// Docs reads the whole review set. The Submit button and the handoff subcommand both go
+// through it, so neither can hand off a different set of files from the other.
+func Docs(target, outDir string) ([]handoff.Doc, error) {
+	root, files, err := Discover(target, outDir)
+	if err != nil {
+		return nil, err
+	}
+
+	docs := make([]handoff.Doc, 0, len(files))
+	for _, rel := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("server: read %s: %w", path, err)
+		}
+		docs = append(docs, handoff.Doc{Path: path, Src: src})
+	}
+	return docs, nil
+}
+
+// Every path the API accepts is matched against the set discovered at startup, so a
+// crafted file= cannot reach outside the target. An empty one means the first file, which
+// is what a single-file review always sends.
+func (s *Server) at(rel string) (string, string, error) {
+	if rel == "" {
+		rel = s.files[0]
+	}
+	if !slices.Contains(s.files, rel) {
+		return "", "", fmt.Errorf("server: %q is not in the review set: %w", rel, errBadRequest)
+	}
+	return rel, filepath.Join(s.root, filepath.FromSlash(rel)), nil
+}
 
 // Fields and Updater are served rather than baked into the page, so the browser cannot
 // drift from the schema the payload is built against.
 type doc struct {
 	Name    string            `json:"name"`
+	Rel     string            `json:"rel"`
 	Path    string            `json:"path"`
 	Rev     string            `json:"rev"`
 	HTML    string            `json:"html"`
@@ -137,40 +226,50 @@ type fileEntry struct {
 	Threads int    `json:"threads"`
 }
 
-func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
+// The counts come off disk on every call rather than being cached, for the same reason
+// nothing else here is: the file is the state.
+func (s *Server) handleFiles(w http.ResponseWriter, _ *http.Request) {
 	s.writeFile.Lock()
 	defer s.writeFile.Unlock()
 
-	src, _, err := s.load()
-	if err != nil {
-		writeError(w, err)
-		return
+	entries := make([]fileEntry, 0, len(s.files))
+	for _, rel := range s.files {
+		path := filepath.Join(s.root, filepath.FromSlash(rel))
+		count := 0
+		if src, _, err := s.load(path); err == nil {
+			threads, err := comments.Threads(src)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			count = len(handoff.Build(s.cfg, threads, "", "").Suggestions)
+		}
+		entries = append(entries, fileEntry{
+			Rel: rel, Ext: strings.ToLower(filepath.Ext(rel)), Threads: count,
+		})
 	}
-	threads, err := comments.Threads(src)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, []fileEntry{{
-		Rel:     filepath.Base(s.path),
-		Ext:     strings.ToLower(filepath.Ext(s.path)),
-		Threads: len(handoff.Build(s.cfg, threads, "", "").Suggestions),
-	}})
+	writeJSON(w, http.StatusOK, entries)
 }
 
 func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {
 	s.writeFile.Lock()
 	defer s.writeFile.Unlock()
 
-	src, rev, err := s.load()
+	rel, path, err := s.at(r.URL.Query().Get("file"))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	s.respond(w, src, rev)
+	src, rev, err := s.load(path)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	s.respond(w, rel, path, src, rev)
 }
 
 type anchorRequest struct {
+	File  string `json:"file"`
 	Rev   string `json:"rev"`
 	Start int    `json:"start"`
 	End   int    `json:"end"`
@@ -185,12 +284,12 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mutate(w, req.Rev, func(src []byte) ([]byte, error) {
+	s.mutate(w, req.File, req.Rev, func(path string, src []byte) ([]byte, error) {
 		id, err := s.freshID(src)
 		if err != nil {
 			return nil, err
 		}
-		out, anchored, err := comments.Anchor(src, req.Start, req.End, req.Quote, id, s.format)
+		out, anchored, err := comments.Anchor(src, req.Start, req.End, req.Quote, id, formatOf(path))
 		if err != nil {
 			return nil, err
 		}
@@ -221,6 +320,7 @@ func (s *Server) freshID(src []byte) (string, error) {
 }
 
 type threadRequest struct {
+	File   string            `json:"file"`
 	Rev    string            `json:"rev"`
 	ID     string            `json:"id"`
 	Body   string            `json:"body"`
@@ -237,7 +337,7 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mutate(w, req.Rev, func(src []byte) ([]byte, error) {
+	s.mutate(w, req.File, req.Rev, func(_ string, src []byte) ([]byte, error) {
 		threads, err := comments.Threads(src)
 		if err != nil {
 			return nil, err
@@ -275,24 +375,25 @@ func (s *Server) handleThreadDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	s.mutate(w, req.Rev, func(src []byte) ([]byte, error) {
+	s.mutate(w, req.File, req.Rev, func(_ string, src []byte) ([]byte, error) {
 		return comments.Remove(src, req.ID)
 	})
 }
 
 // Everything below the lock lives in handoff.Submit, so the browser's Submit button and
-// the handoff subcommand cannot produce different payloads.
+// the handoff subcommand cannot produce different payloads. One payload spans the whole
+// review set, each suggestion naming the file it came from.
 func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	s.writeFile.Lock()
 	defer s.writeFile.Unlock()
 
-	src, _, err := s.load()
+	docs, err := Docs(s.target, s.outDir)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 
-	result, err := handoff.Submit(s.cfg, s.outDir, s.skill, []handoff.Doc{{Path: s.path, Src: src}})
+	result, err := handoff.Submit(s.cfg, s.outDir, s.skill, docs)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -304,12 +405,18 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// The write is refused if the file changed since the client last read it.
-func (s *Server) mutate(w http.ResponseWriter, rev string, fn func([]byte) ([]byte, error)) {
+// The write is refused if the file changed since the client last read it. The rev is per
+// file, so an edit made in the editor to one document leaves the rest of the set usable.
+func (s *Server) mutate(w http.ResponseWriter, file, rev string, fn func(path string, src []byte) ([]byte, error)) {
 	s.writeFile.Lock()
 	defer s.writeFile.Unlock()
 
-	src, current, err := s.load()
+	rel, path, err := s.at(file)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	src, current, err := s.load(path)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -322,26 +429,26 @@ func (s *Server) mutate(w http.ResponseWriter, rev string, fn func([]byte) ([]by
 		return
 	}
 
-	out, err := fn(src)
+	out, err := fn(path, src)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	if err := s.save(out); err != nil {
+	if err := s.save(path, out); err != nil {
 		writeError(w, err)
 		return
 	}
 
-	_, current, err = s.load()
+	_, current, err = s.load(path)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	s.respond(w, out, current)
+	s.respond(w, rel, path, out, current)
 }
 
-func (s *Server) respond(w http.ResponseWriter, src []byte, rev string) {
-	html, err := s.render(src)
+func (s *Server) respond(w http.ResponseWriter, rel, path string, src []byte, rev string) {
+	html, err := renderDoc(formatOf(path), src)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -352,8 +459,9 @@ func (s *Server) respond(w http.ResponseWriter, src []byte, rev string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, doc{
-		Name:    skill.Name(src),
-		Path:    s.path,
+		Name:    s.name(),
+		Rel:     rel,
+		Path:    path,
 		Rev:     rev,
 		HTML:    string(html),
 		Threads: threads,
@@ -362,29 +470,43 @@ func (s *Server) respond(w http.ResponseWriter, src []byte, rev string) {
 	})
 }
 
+// The heading names the skill, not the file being read: a directory review has many
+// documents and only one of them carries the frontmatter.
+func (s *Server) name() string {
+	skillMD, err := skill.Resolve(s.skill)
+	if err != nil {
+		return ""
+	}
+	src, err := os.ReadFile(skillMD)
+	if err != nil {
+		return ""
+	}
+	return skill.Name(src)
+}
+
 // The revision stamp is what lets a simultaneous edit in the editor be caught instead
 // of silently overwritten.
-func (s *Server) load() ([]byte, string, error) {
-	src, err := os.ReadFile(s.path)
+func (s *Server) load(path string) ([]byte, string, error) {
+	src, err := os.ReadFile(path)
 	if err != nil {
-		return nil, "", fmt.Errorf("server: read %s: %w", s.path, err)
+		return nil, "", fmt.Errorf("server: read %s: %w", path, err)
 	}
-	info, err := os.Stat(s.path)
+	info, err := os.Stat(path)
 	if err != nil {
-		return nil, "", fmt.Errorf("server: stat %s: %w", s.path, err)
+		return nil, "", fmt.Errorf("server: stat %s: %w", path, err)
 	}
 	return src, strconv.FormatInt(info.ModTime().UnixNano(), 36) + "-" + strconv.FormatInt(info.Size(), 36), nil
 }
 
 // Writing via a temporary file in the same directory means an interrupted write can
-// never leave a half-written SKILL.md behind.
-func (s *Server) save(src []byte) error {
-	info, err := os.Stat(s.path)
+// never leave a half-written document behind.
+func (s *Server) save(path string, src []byte) error {
+	info, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("server: stat %s: %w", s.path, err)
+		return fmt.Errorf("server: stat %s: %w", path, err)
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".skill-review-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".skill-review-*")
 	if err != nil {
 		return fmt.Errorf("server: create temp file: %w", err)
 	}
@@ -400,8 +522,8 @@ func (s *Server) save(src []byte) error {
 	if err := os.Chmod(tmp.Name(), info.Mode()); err != nil {
 		return fmt.Errorf("server: chmod temp file: %w", err)
 	}
-	if err := os.Rename(tmp.Name(), s.path); err != nil {
-		return fmt.Errorf("server: replace %s: %w", s.path, err)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("server: replace %s: %w", path, err)
 	}
 	return nil
 }

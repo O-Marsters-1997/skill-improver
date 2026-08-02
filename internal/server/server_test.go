@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -285,16 +286,27 @@ func TestThreadLifecycle(t *testing.T) {
 	})
 }
 
-func comment(t *testing.T, s *Server, passage, body string) {
+// An empty rel means the first file in the set, the way the page sends it for a
+// single-file review.
+func commentOn(t *testing.T, s *Server, rel, passage, body string) {
 	t.Helper()
 
-	start, end := offsetOf(t, string(mustRead(t, s.Path())), passage)
+	_, path, err := s.at(rel)
+	if err != nil {
+		t.Fatalf("%q is not in the review set: %v", rel, err)
+	}
+	start, end := offsetOf(t, string(mustRead(t, path)), passage)
 	w := post(t, s, "/api/anchor", anchorRequest{
-		Rev: getDoc(t, s).Rev, Start: start, End: end, Quote: passage, Body: body,
+		File: rel, Rev: getFile(t, s, rel).Rev, Start: start, End: end, Quote: passage, Body: body,
 	})
 	if w.Code != http.StatusOK {
-		t.Fatalf("anchor %q = %d: %s", passage, w.Code, w.Body)
+		t.Fatalf("anchor %q in %s = %d: %s", passage, path, w.Code, w.Body)
 	}
+}
+
+func comment(t *testing.T, s *Server, passage, body string) {
+	t.Helper()
+	commentOn(t, s, "", passage, body)
 }
 
 func submit(t *testing.T, s *Server) handoff.Result {
@@ -527,6 +539,40 @@ func TestAnchorGivesUpOnAnIDSourceThatOnlyCollides(t *testing.T) {
 	}
 }
 
+// A skill directory as the target: a SKILL.md, a reference, and a pile of things
+// discovery has to leave out.
+func newDirServer(t *testing.T) (*Server, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	write := func(rel, body string) {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write("SKILL.md", fixture)
+	write("references/api.md", "# API\n\nThe reference body.\n")
+	write("references/notes.md", "# Notes\n\nSomething else entirely.\n")
+	write("report.html", "<p>rendered later</p>")
+	write("README.txt", "not reviewable")
+	write(".hidden.md", "a dotfile")
+	write(".git/config.md", "inside a dot-directory")
+	write("node_modules/pkg/readme.md", "vendored")
+	// --out can point anywhere, so it is excluded by path rather than by being a dotfile.
+	write("out/leftover.md", "the output directory")
+
+	s, err := New(config.Default(), dir, "", filepath.Join(dir, "out"), "olly")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return s, dir
+}
+
 func getFiles(t *testing.T, s *Server) []fileEntry {
 	t.Helper()
 
@@ -648,6 +694,167 @@ func TestHTMLTarget(t *testing.T) {
 
 	if reread := getDoc(t, s); len(reread.Threads) != 1 || reread.Threads[0].ID != created.Threads[0].ID {
 		t.Errorf("re-reading the file lost the thread: %+v", reread.Threads)
+	}
+}
+
+func getFile(t *testing.T, s *Server, rel string) doc {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/doc?file="+rel, nil))
+	return decodeDoc(t, w)
+}
+
+func TestDiscoversTheWholeDirectory(t *testing.T) {
+	s, _ := newDirServer(t)
+
+	var rels []string
+	for _, f := range getFiles(t, s) {
+		rels = append(rels, f.Rel)
+	}
+
+	want := []string{"SKILL.md", "references/api.md", "references/notes.md", "report.html"}
+	if !slices.Equal(rels, want) {
+		t.Errorf("files = %q; want %q", rels, want)
+	}
+}
+
+// A single file is the same code path with a one-element set, which is what keeps the
+// browser from needing two modes.
+func TestSingleFileIsAOneElementSet(t *testing.T) {
+	s, path := newTestServer(t)
+
+	files := getFiles(t, s)
+	if len(files) != 1 || files[0].Rel != "SKILL.md" {
+		t.Fatalf("files = %+v", files)
+	}
+	if d := getDoc(t, s); d.Rel != "SKILL.md" || d.Path != path {
+		t.Errorf("doc = %+v; want the target itself", d)
+	}
+}
+
+func TestFileListCountsThreads(t *testing.T) {
+	s, _ := newDirServer(t)
+	commentOn(t, s, "references/api.md", "The reference body", "say what it returns")
+
+	for _, f := range getFiles(t, s) {
+		want := 0
+		if f.Rel == "references/api.md" {
+			want = 1
+		}
+		if f.Threads != want {
+			t.Errorf("%s has %d threads; want %d", f.Rel, f.Threads, want)
+		}
+	}
+}
+
+func TestCommentsLandInTheFileTheyWereMadeOn(t *testing.T) {
+	s, dir := newDirServer(t)
+
+	commentOn(t, s, "references/api.md", "The reference body", "say what it returns")
+
+	if len(getFile(t, s, "references/api.md").Threads) != 1 {
+		t.Error("the comment did not land in the file it was made on")
+	}
+	for _, other := range []string{"SKILL.md", "references/notes.md"} {
+		if len(getFile(t, s, other).Threads) != 0 {
+			t.Errorf("%s picked up a comment made elsewhere", other)
+		}
+		if strings.Contains(string(mustRead(t, filepath.Join(dir, other))), "mc:a:") {
+			t.Errorf("%s was written to on disk", other)
+		}
+	}
+}
+
+// A path outside the discovered set must not be readable through the file parameter.
+func TestRejectsAFileOutsideTheSet(t *testing.T) {
+	s, _ := newDirServer(t)
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/doc?file=../../etc/passwd", nil))
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400", w.Code)
+	}
+}
+
+func TestRevIsPerFile(t *testing.T) {
+	s, dir := newDirServer(t)
+	stale := getFile(t, s, "SKILL.md").Rev
+	otherRev := getFile(t, s, "references/api.md").Rev
+
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(fixture+"\nEdited elsewhere.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	start, end := offsetOf(t, fixture, "never push")
+	w := post(t, s, "/api/anchor", anchorRequest{
+		File: "SKILL.md", Rev: stale, Start: start, End: end, Quote: "never push", Body: "x",
+	})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d; want 409 on the edited file", w.Code)
+	}
+
+	// The other file was untouched, so its rev is still good and it keeps working.
+	body, bodyEnd := offsetOf(t, "# API\n\nThe reference body.\n", "The reference body")
+	w = post(t, s, "/api/anchor", anchorRequest{
+		File: "references/api.md", Rev: otherRev, Start: body, End: bodyEnd,
+		Quote: "The reference body", Body: "still fine",
+	})
+	if w.Code != http.StatusOK {
+		t.Errorf("an edit to one file invalidated another: %d %s", w.Code, w.Body)
+	}
+
+	// Reloading the edited file is the recovery the page performs on a 409.
+	if getFile(t, s, "SKILL.md").Rev == stale {
+		t.Error("rev did not move after the external edit")
+	}
+}
+
+// HTML is discovered alongside Markdown, and renders through the same per-file format
+// detection a single HTML target uses.
+func TestHTMLFileInDirectoryRenders(t *testing.T) {
+	s, _ := newDirServer(t)
+
+	d := getFile(t, s, "report.html")
+	if !strings.Contains(d.HTML, "data-o=") {
+		t.Errorf("report.html did not render:\n%s", d.HTML)
+	}
+}
+
+func TestHandoffSpansEveryFile(t *testing.T) {
+	s, dir := newDirServer(t)
+	commentOn(t, s, "SKILL.md", "never push", "explain the failure mode")
+	commentOn(t, s, "references/api.md", "The reference body", "say what it returns")
+	commentOn(t, s, "references/notes.md", "Something else entirely", "cut this")
+
+	got := submit(t, s)
+
+	if len(got.Payload.Suggestions) != 3 {
+		t.Fatalf("got %d suggestions; want one per file", len(got.Payload.Suggestions))
+	}
+	var files []string
+	for _, sug := range got.Payload.Suggestions {
+		files = append(files, sug.File)
+	}
+	slices.Sort(files)
+	want := []string{
+		filepath.Join(dir, "SKILL.md"),
+		filepath.Join(dir, "references", "api.md"),
+		filepath.Join(dir, "references", "notes.md"),
+	}
+	slices.Sort(want)
+	if !slices.Equal(files, want) {
+		t.Errorf("files = %q; want %q", files, want)
+	}
+
+	// One payload, in one pending file — the skill named by the directory, not by
+	// whichever document happened to be open.
+	if got.Payload.SkillName != "example-skill" || got.Payload.SkillPath != dir {
+		t.Errorf("payload header = %+v", got.Payload)
+	}
+	if len(readPendingFile(t, s).Suggestions) != 3 {
+		t.Error("pending.json does not hold the whole review set")
 	}
 }
 

@@ -165,6 +165,8 @@ var fieldName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 // Fields are written flat onto the thread and flat onto the suggestion, so a field named
 // after one of their own keys would overwrite it.
+// "file" is not a thread key but a suggestion one: the handoff stamps the reviewed file
+// onto every suggestion, so a field of that name would be overwritten in the payload.
 var reserved = []string{"id", "quote", "status", "comments", "impact", "file", "mode"}
 
 func (c *Config) validate(path string) error {
@@ -220,6 +222,7 @@ func UpdaterName(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 
 	src, err := os.ReadFile(file)
 	if err != nil {

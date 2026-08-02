@@ -108,6 +108,7 @@ func New(cfg *config.Config, target, skillPath, outDir, author string) (*Server,
 	s.mux.HandleFunc("POST /api/thread", s.handleThread)
 	s.mux.HandleFunc("POST /api/thread/delete", s.handleThreadDelete)
 	s.mux.HandleFunc("POST /api/handoff", s.handleHandoff)
+	s.mux.HandleFunc("POST /api/file/clear", s.handleFileClear)
 	return s, nil
 }
 
@@ -210,9 +211,6 @@ type doc struct {
 // One row of the explorer. Threads counts what Build would turn into suggestions rather
 // than every thread in the file, so a file whose threads are all resolved is not named as
 // a contributor the Submit panel has to warn about.
-//
-// ponytail: archived ids are not subtracted, so the count can overstate by threads already
-// handed off; wire archivedIDs in if the over-report ever misleads.
 type fileEntry struct {
 	Rel     string `json:"rel"`
 	Ext     string `json:"ext"`
@@ -373,20 +371,40 @@ func (s *Server) handleThreadDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Everything below the lock lives in handoff.Submit, so the browser's Submit button and
-// the handoff subcommand cannot produce different payloads. One payload spans the whole
-// review set, each suggestion naming the file it came from.
+// handleHandoff submits one file at a time: handoff.Submit merges its suggestions onto
+// whatever is already pending from an earlier submit of a different file, so this cannot
+// erase them. The headless `skill-review handoff` subcommand takes the whole review set
+// instead and never writes back to a document — it is a read-only preview/backstop, and
+// only this handler strips comments.
 func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
-	s.writeFile.Lock()
-	defer s.writeFile.Unlock()
-
-	docs, err := Docs(s.root, s.files)
-	if err != nil {
+	var req fileRequest
+	if err := decode(r, &req); err != nil {
 		writeError(w, err)
 		return
 	}
 
-	result, err := handoff.Submit(s.cfg, s.outDir, s.skill, docs)
+	s.writeFile.Lock()
+	defer s.writeFile.Unlock()
+
+	_, path, err := s.at(req.File)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	src, current, err := s.load(path)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if req.Rev != "" && req.Rev != current {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "the file changed on disk since you loaded it",
+			"rev":   current,
+		})
+		return
+	}
+
+	result, err := handoff.Submit(s.cfg, s.outDir, s.skill, []handoff.Doc{{Path: path, Src: src}})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -395,7 +413,39 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		// The terminal is the one surface a failed clipboard write cannot take away.
 		log.Printf("handoff: %s", result.Prompt)
 	}
+
+	// The payload is on disk before the threads leave the document: a save failure here
+	// leaves the ids in pending.json and still in the file, and a re-submit dedupes by id.
+	if len(result.Submitted) > 0 {
+		out := src
+		for _, id := range result.Submitted {
+			if out, err = comments.Remove(out, id); err != nil {
+				writeError(w, err)
+				return
+			}
+		}
+		if err := s.save(path, out); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+type fileRequest struct {
+	File string `json:"file"`
+	Rev  string `json:"rev"`
+}
+
+func (s *Server) handleFileClear(w http.ResponseWriter, r *http.Request) {
+	var req fileRequest
+	if err := decode(r, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	s.mutate(w, req.File, req.Rev, func(_ string, src []byte) ([]byte, error) {
+		return comments.Clear(src), nil
+	})
 }
 
 // The write is refused if the file changed since the client last read it. The rev is per

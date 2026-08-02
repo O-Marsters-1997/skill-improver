@@ -260,6 +260,26 @@ func Remove(src []byte, id string) ([]byte, error) {
 	return out, nil
 }
 
+// Clear strips every comment out of src: the threads block and every anchor marker,
+// leaving the reviewed prose behind. A file with no comments clears to itself.
+func Clear(src []byte) []byte {
+	_, start, end, ok := threadsBlock(src)
+	if !ok {
+		return src
+	}
+	blockStart := start - len(threadsBegin) - 1
+	blockEnd := min(end+len(threadsEnd)+1, len(src))
+	out := splice(src, blockStart, blockEnd, "")
+
+	// Block-mode markers sit on a line of their own; take the line, or the fence they
+	// wrapped is left floating in a blank.
+	out = ownLineMarker.ReplaceAll(out, nil)
+	out = markerPattern.ReplaceAll(out, nil)
+	return append(bytes.TrimRight(out, "\n"), '\n')
+}
+
+var ownLineMarker = regexp.MustCompile(`(?m)^<!--mc:/?a:[a-z0-9]{1,12}-->\n`)
+
 func NewID() string {
 	return strconv.FormatUint(rand.Uint64N(36*36*36*36*36*36), 36)
 }

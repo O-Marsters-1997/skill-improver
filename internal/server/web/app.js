@@ -7,14 +7,13 @@ const toast = document.getElementById("toast");
 const selectionMenu = document.getElementById("selection-menu");
 const handoffPanel = document.getElementById("handoff");
 const fileList = document.getElementById("file-list");
-const filterNote = document.getElementById("file-filter-note");
+const discardAll = document.getElementById("discard-all");
 
 // fields comes from the server, so the controls here and the payload the server builds
 // can never describe different schemas. revs is keyed by file: an edit made in the editor
 // to one document must not lock the reviewer out of the others.
 //
-// filter decides which rows the explorer draws and nothing else. No request carries it,
-// which is what stops it changing what Submit ships — keep it out of every payload.
+// filter decides which rows the explorer draws and nothing else — it is browser state only.
 const state = { file: null, revs: {}, threads: [], fields: [], files: [], filter: "markdown", pending: null, selected: null };
 
 const MARKDOWN = new Set([".md", ".markdown"]);
@@ -220,8 +219,8 @@ function draw(payload) {
   state.fields = payload.fields ?? [];
 
   document.getElementById("submit-all").textContent = payload.updater
-    ? `Submit all to ${payload.updater}`
-    : "Submit all";
+    ? `Submit this file to ${payload.updater}`
+    : "Submit this file";
   document.getElementById("skill-name").textContent = payload.name || "skill-review";
   document.getElementById("skill-path").textContent = payload.path;
   document.title = payload.name ? `${payload.name} — skill-review` : "skill-review";
@@ -235,6 +234,7 @@ function draw(payload) {
 
   threadList.replaceChildren(...state.threads.map(threadCard));
   document.getElementById("empty").hidden = state.threads.length > 0;
+  discardAll.hidden = state.threads.length === 0;
   highlight(state.selected);
   hideSelectionMenu();
 }
@@ -249,13 +249,6 @@ function highlight(id) {
   }
 }
 
-function nameHidden() {
-  return state.files
-    .filter((file) => !shown(file) && file.threads > 0)
-    .map((file) => file.rel)
-    .join(", ");
-}
-
 function drawFiles() {
   fileList.replaceChildren(
     ...state.files.filter(shown).map((file) =>
@@ -267,10 +260,6 @@ function drawFiles() {
       ),
     ),
   );
-
-  const hidden = nameHidden();
-  filterNote.textContent = hidden ? `Hidden, and still handed off: ${hidden}` : "";
-  filterNote.hidden = hidden === "";
 }
 
 async function loadFiles() {
@@ -379,12 +368,13 @@ threadList.addEventListener("change", (event) => {
 });
 
 // The prompt is the one thing worth keeping on screen, so this panel waits to be
-// dismissed rather than timing out like every other message.
+// dismissed rather than timing out like every other message. Submitting removes the
+// handed-off threads from this file, so the doc and file list are reloaded after.
 document.getElementById("submit-all").addEventListener("click", () => {
   run(async () => {
-    const result = await api("/api/handoff", {});
-    await loadFiles();
-    // The server's total, never the filtered view's.
+    const result = await api("/api/handoff", { file: state.file, rev: state.revs[state.file] });
+    await load(state.file);
+    // The pending total across the whole review set, never the filtered view's.
     const count = result.payload.improvement_suggestions.length;
     const prompt = document.getElementById("handoff-prompt");
 
@@ -399,15 +389,21 @@ document.getElementById("submit-all").addEventListener("click", () => {
     document.getElementById("handoff-copy").hidden = false;
 
     const noun = `${count} suggestion${count === 1 ? "" : "s"}`;
-    const hidden = nameHidden();
-    const from = hidden ? ` — including ${hidden}, which the filter is hiding` : "";
     document.getElementById("handoff-summary").textContent = result.changed
-      ? `${noun} pending in ${result.file}${from}`
-      : `Nothing new — ${noun} still pending in ${result.file}${from}`;
+      ? `${noun} pending in ${result.file}`
+      : `Nothing new — ${noun} still pending in ${result.file}`;
     prompt.textContent = result.prompt;
     prompt.hidden = false;
     handoffPanel.hidden = false;
     copyPrompt();
+  });
+});
+
+discardAll.addEventListener("click", () => {
+  run(async () => {
+    if (!confirm(`Discard every comment on ${state.file}? This cannot be undone.`)) return;
+    await apply("/api/file/clear", {});
+    say("All comments discarded.");
   });
 });
 

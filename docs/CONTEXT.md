@@ -31,8 +31,11 @@ already on disk. A failed submit loses nothing; click it again.
 Because the comments live in the file, they can also be collected without this tool at all.
 `skill-review handoff <target>` prints the payload and prompt with no server involved, and
 the `/skill-comments` slash command is a thin wrapper over it. That path runs the same
-`handoff.Submit` the button does rather than reimplementing it, so a broken button is never
-a dead end and the two can never disagree about the schema.
+`handoff.Submit` the button does rather than reimplementing it, so the two can never disagree
+about the schema — but only the button's handler follows it up by stripping the handed-off
+threads from the document. The CLI is deliberately read-only: it is the backstop when the
+browser is not an option, and a backstop that could silently consume a comment on a bad run
+would be worse than none.
 
 Two non-goals, both deliberate, and the second is narrower than it first sounds. There is
 no editor — you review, Claude writes, so a rendered view you can highlight is the whole
@@ -118,13 +121,21 @@ the `mode` is on the payload because it describes the whole review. The composer
 none of it: fields are set on the thread cards, where every other thread is in view, because
 ranking one comment against nothing is not a judgement anyone can make.
 
-**Pending** and **archive** — `.skill-review/pending.json` holds every open thread that has
-not yet been handed off. It is regenerated on each Submit, so a retriage, a reply or a
-deletion lands in it. The prompt carries a `mv` that moves it to
+**Pending** and **archive** — `.skill-review/pending.json` holds every thread submitted and
+not yet handed off. Submit acts on one file at a time and **merges** its suggestions onto
+whatever is already there, so submitting file B cannot erase file A's suggestions from an
+earlier submit. The prompt carries a `mv` that moves the whole file to
 `handoff-<skill>-<timestamp>.json`; from then on those thread ids are **archived**, and
 Submit excludes them for good. That boundary is the whole point — without it a second Submit
-re-proposes work `skill-updater` has already applied. A reply to an archived thread stays a
-local record and is never handed off again.
+re-proposes work `skill-updater` has already applied.
+
+Submit also **strips the threads it hands off from the document** the moment it writes
+`pending.json`, so the same comment cannot be submitted twice — a thread gone from the file
+is gone from the review, not just from what a future Submit would send. A retriage, reply or
+resolve only has anything left to affect if it happens *before* that submit. Threads that
+were never in the payload — resolved, or with every comment deleted — are untouched by
+Submit; **Discard all comments** is the separate, explicit way to clear those, and it takes
+none of them to pending.json first.
 
 ## Shape
 

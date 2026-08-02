@@ -236,11 +236,6 @@ aside {
   padding: 0 0.4rem;
 }
 
-#file-filter-note {
-  margin: 0.5rem 0 0;
-  color: var(--accent);
-}
-
 /* An id selector outranks the user-agent [hidden] rule, so restate it. */
 #composer[hidden] {
   display: none;
@@ -249,6 +244,11 @@ aside {
 #composer h2 {
   font-size: 0.9rem;
   margin: 0;
+}
+
+#discard-all {
+  width: 100%;
+  margin-bottom: 0.75rem;
 }
 
 .thread + .thread {

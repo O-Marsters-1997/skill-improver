@@ -85,13 +85,18 @@ a table) it links out to, built specifically to exercise the anchoring across fi
    - Set the **fields** — the triage step, with every other thread in view. One control per
      configured field; by default that is Priority and Category, defaulting to
      `medium`/`instructions`. See [Configuration](#configuration).
-4. **Submit all** (top right, named after your updater skill when one is configured) collects
-   every open thread that hasn't already
-   been handed off into `.skill-review/pending.json`, and shows the prompt in a panel that
-   stays until you close it — with a **Copy prompt** button, in case the automatic clipboard
-   write was refused. Nothing is pushed anywhere, so clicking it twice is harmless: the
-   second click reports that nothing is new. Paste the prompt to Claude, and **run the `mv`
-   it gives you** once the suggestions are applied — see [The handoff step](#the-handoff-step).
+4. **Submit this file** (top right, named after your updater skill when one is configured)
+   collects every open thread in the file you're viewing that hasn't already been handed off
+   into `.skill-review/pending.json`, **removes those threads from the document** so they
+   can't be handed off a second time, and shows the prompt in a panel that stays until you
+   close it — with a **Copy prompt** button, in case the automatic clipboard write was
+   refused. It only ever touches the file you're on; submit each file you want included.
+   Nothing is pushed anywhere, so clicking it twice is harmless: the second click reports that
+   nothing is new. Paste the prompt to Claude, and **run the `mv` it gives you** once the
+   suggestions are applied — see [The handoff step](#the-handoff-step).
+5. **Discard all comments** (above the thread list) removes every comment on the current
+   file — open, resolved, everything — without submitting any of it. Confirm the prompt;
+   there's no undo.
 
 If the file changes on disk while you're reviewing (e.g. someone edits it in another editor),
 the next write is refused with a conflict and the page reloads — no changes are lost, you
@@ -111,7 +116,7 @@ after the command name; pass them through `just run`, or straight to the binary 
 | Command | What it does |
 | ------- | ------------ |
 | `serve <target>` | Serve a file, or a whole skill directory, for review. The default — the name is optional |
-| `handoff <target>` | Print the payload and prompt for the whole target without serving anything. The backstop when the browser is not an option |
+| `handoff <target>` | Print the payload and prompt for the whole target without serving anything or writing back to any document. The backstop when the browser is not an option |
 | `config init` | Write a config file with the built-in defaults spelled out |
 
 | Flag | Default | Description |
@@ -210,23 +215,24 @@ land in the directory you ran the binary from — next to the work, not buried i
 
 Two kinds of file live there:
 
-- **`pending.json`** — everything open and not yet handed off. There is only ever one, and
-  Submit rewrites it in place.
+- **`pending.json`** — everything submitted and not yet handed off. There is only ever one,
+  and each Submit merges its file's suggestions into it — a submit of one file adds to
+  what an earlier submit of another file left there, rather than replacing it.
 - **`handoff-<skill-name>-<UTC timestamp>.json`** — an archive of one handoff that has been
   applied. Submit reads these to know which threads are done.
 
 ## The handoff step
 
-Clicking **Submit all** writes `pending.json`: `skill_name`, `skill_path`, `mode`, and an
-`improvement_suggestions` list, each with the thread's `id`, the absolute `file` it was
+Clicking **Submit this file** writes `pending.json`: `skill_name`, `skill_path`, `mode`, and
+an `improvement_suggestions` list, each with the thread's `id`, the absolute `file` it was
 anchored in, one key per [configured field](#configuration), `suggestion` (the comment
 thread text, with the anchored quote appended) and `expected_impact`, sorted by the first
-field across the whole review set rather than per file. One Submit covers every file in the
-target, so a directory review produces one payload with several distinct `file` values.
-`skill_name` is read from `<skill>/SKILL.md`, so it names the skill being improved even when
-that is not the file you reviewed. `expected_impact` is
-synthesised from the anchored quote — the UI never asks for it, because an updater derives
-that kind of framing better than a text box collects it.
+field across the whole pending set rather than per file. Submit acts on one file at a time,
+so a directory review builds up one payload with several distinct `file` values across
+several submits, each adding what that document had open. `skill_name` is read from
+`<skill>/SKILL.md`, so it names the skill being improved even when that is not the file you
+reviewed. `expected_impact` is synthesised from the anchored quote — the UI never asks for
+it, because an updater derives that kind of framing better than a text box collects it.
 
 The prompt you get back has two parts. With an updater configured it names it:
 
@@ -247,11 +253,12 @@ boundary, a second review session re-proposes everything the first one already a
 
 Everything else follows from it:
 
-- Pending is **regenerated** on every Submit, not appended to, so retriaging a thread,
-  replying to it, resolving it or deleting it is reflected next time you click.
-- A Submit that changes nothing doesn't rewrite the file, and the panel says so.
-- Replying to a thread that has already been archived keeps the reply as a local record —
-  it is not handed off a second time. Start a new thread if you want it acted on.
+- Submit **removes the threads it hands off from the document**, so retriaging, replying to
+  or resolving one only matters if you do it before you submit — once submitted, it's gone
+  from the file and can't be handed off again. A resolved thread, or one whose comments were
+  all deleted, was never in the payload and stays put; use **Discard all comments** to clear
+  those.
+- A Submit that changes nothing pending doesn't rewrite the file, and the panel says so.
 - With every open thread archived, Submit reports nothing to hand off and removes
   `pending.json`.
 
@@ -260,9 +267,10 @@ be dismissed), a `prompt` field in `pending.json` itself, and a line printed to 
 running the server. That file is therefore a superset of what an updater reads — `skill_name`,
 `skill_path`, `mode` and `improvement_suggestions` are still at the top level.
 
-`skill-review handoff <target>` does all of the above without a browser, printing the payload
-and the prompt to stdout. It runs the same code the button does, so a broken button is never
-a dead end.
+`skill-review handoff <target>` prints the same kind of payload and prompt without a browser,
+covering the whole target in one call. Unlike the Submit button it is read-only: it never
+writes back to a reviewed document, so it's safe to run as a preview, or as a backstop when
+the browser is not an option, without consuming any comment.
 
 ## Development
 

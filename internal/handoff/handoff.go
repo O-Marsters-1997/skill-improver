@@ -1,42 +1,62 @@
-// Package handoff builds the payload the skill-updater skill consumes on its
-// programmatic path.
+// Package handoff builds the payload the updater skill consumes on its programmatic
+// path.
 //
-// Nothing here pushes anywhere. The payload is a pure function of threads already
-// written to disk, so a failed handoff loses no work — the same call repeated gives
-// the same result.
+// Build pushes nowhere: the payload is a pure function of threads already written to
+// disk, so a failed handoff loses no work and the same call repeated gives the same
+// result. Submit, in pending.go, is the one thing here that touches the filesystem.
 package handoff
 
 import (
+	"encoding/json"
 	"fmt"
-	"regexp"
+	"maps"
 	"slices"
 	"strings"
 
 	"github.com/O-Marsters-1997/improve-skills/internal/comments"
+	"github.com/O-Marsters-1997/improve-skills/internal/config"
 )
 
-const (
-	defaultPriority = "medium"
-	defaultCategory = "instructions"
-
-	// A highlight can cover a whole code block, and skill-updater does not need it
-	// repeated in full.
-	quoteLimit = 200
-)
-
-var (
-	priorities = []string{"high", "medium", "low"}
-	categories = []string{"instructions", "tools", "examples", "error_handling", "structure", "references"}
-)
+// A highlight can cover a whole code block, and the updater does not need it repeated
+// in full.
+const quoteLimit = 200
 
 // ID is the originating thread's, and is what tells a later handoff that this
-// suggestion has already been applied.
+// suggestion has already been applied. Fields carries whatever the config asks for, and
+// is written flat alongside the rest.
 type Suggestion struct {
-	ID             string `json:"id"`
-	Priority       string `json:"priority"`
-	Category       string `json:"category"`
-	Suggestion     string `json:"suggestion"`
-	ExpectedImpact string `json:"expected_impact"`
+	ID             string
+	Fields         map[string]string
+	Suggestion     string
+	ExpectedImpact string
+}
+
+// Every value in a suggestion is a string, so one map is the whole object; encoding/json
+// sorts its keys, which is what keeps an unchanged payload comparing equal.
+func (s Suggestion) MarshalJSON() ([]byte, error) {
+	flat := map[string]string{
+		"id":              s.ID,
+		"suggestion":      s.Suggestion,
+		"expected_impact": s.ExpectedImpact,
+	}
+	maps.Copy(flat, s.Fields)
+	return json.Marshal(flat)
+}
+
+func (s *Suggestion) UnmarshalJSON(data []byte) error {
+	var flat map[string]string
+	if err := json.Unmarshal(data, &flat); err != nil {
+		return err
+	}
+	s.ID, s.Suggestion, s.ExpectedImpact = flat["id"], flat["suggestion"], flat["expected_impact"]
+
+	delete(flat, "id")
+	delete(flat, "suggestion")
+	delete(flat, "expected_impact")
+	if len(flat) > 0 {
+		s.Fields = flat
+	}
+	return nil
 }
 
 type Payload struct {
@@ -46,7 +66,7 @@ type Payload struct {
 }
 
 // Resolved threads and threads whose comments have all been retracted are left out.
-func Build(threads []comments.Thread, skillName, skillPath string) Payload {
+func Build(cfg *config.Config, threads []comments.Thread, skillName, skillPath string) Payload {
 	payload := Payload{
 		SkillName:   skillName,
 		SkillPath:   skillPath,
@@ -61,39 +81,27 @@ func Build(threads []comments.Thread, skillName, skillPath string) Payload {
 		if len(bodies) == 0 {
 			continue
 		}
+
+		fields := make(map[string]string, len(cfg.Fields))
+		for _, f := range cfg.Fields {
+			fields[f.Name] = oneOf(t.Fields[f.Name], f.Values, f.Default)
+		}
 		payload.Suggestions = append(payload.Suggestions, Suggestion{
 			ID:             t.ID,
-			Priority:       oneOf(t.Priority, priorities, defaultPriority),
-			Category:       oneOf(t.Category, categories, defaultCategory),
+			Fields:         fields,
 			Suggestion:     describe(bodies, t.Quote),
 			ExpectedImpact: impact(t),
 		})
 	}
 
-	slices.SortStableFunc(payload.Suggestions, func(a, b Suggestion) int {
-		return slices.Index(priorities, a.Priority) - slices.Index(priorities, b.Priority)
-	})
+	// The first field is the ranking one, ordered as its values are listed.
+	if sortBy, ok := cfg.SortField(); ok {
+		slices.SortStableFunc(payload.Suggestions, func(a, b Suggestion) int {
+			return slices.Index(sortBy.Values, a.Fields[sortBy.Name]) -
+				slices.Index(sortBy.Values, b.Fields[sortBy.Name])
+		})
+	}
 	return payload
-}
-
-var frontmatterName = regexp.MustCompile(`(?m)^name:[ \t]*["']?([^"'\r\n]+?)["']?[ \t]*$`)
-
-// A YAML parser would be a dependency earned by exactly one field.
-func SkillName(src []byte) string {
-	const delimiter = "---\n"
-	body, ok := strings.CutPrefix(string(src), delimiter)
-	if !ok {
-		return ""
-	}
-	block, _, ok := strings.Cut(body, "\n"+delimiter)
-	if !ok {
-		return ""
-	}
-	m := frontmatterName.FindStringSubmatch(block)
-	if m == nil {
-		return ""
-	}
-	return m[1]
 }
 
 func liveBodies(cs []comments.Comment) []string {

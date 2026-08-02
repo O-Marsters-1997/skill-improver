@@ -1,7 +1,9 @@
 default:
     @just --list
 
-# Serve a SKILL.md for review; flags pass through: just run --addr :9000 path/to/SKILL.md
+# Serve a SKILL.md for review; everything passes through, flags either side of the path:
+#   just run --addr :9000 path/to/SKILL.md
+#   just run config init --local
 run *ARGS='testdata/example-SKILL.md':
     go run ./cmd/skill-review {{ARGS}}
 

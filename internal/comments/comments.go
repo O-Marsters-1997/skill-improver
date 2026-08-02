@@ -46,17 +46,93 @@ type Comment struct {
 	Deleted  bool   `json:"deleted,omitempty"`
 }
 
-// Priority, Category and Impact are extensions to the mc format. They carry the
-// fields skill-updater needs, captured while commenting so the handoff payload is
-// complete before Submit is clicked. Other tools that read mc ignore unknown keys.
+// Fields and Impact are extensions to the mc format. Fields holds whatever triage the
+// config asks for — priority and category, by default — captured while commenting so the
+// handoff payload is complete before Submit is clicked. They are written flat onto the
+// thread object rather than nested, so a file written before the schema was configurable
+// still reads, and other tools that read mc ignore the keys they do not know.
 type Thread struct {
+	ID       string
+	Quote    string
+	Status   string // "open" or "resolved"
+	Comments []Comment
+	Fields   map[string]string
+	Impact   string
+}
+
+// The fixed keys, in mc order. Everything dynamic is appended after them.
+type threadHead struct {
 	ID       string    `json:"id"`
 	Quote    string    `json:"quote"`
-	Status   string    `json:"status"` // "open" or "resolved"
+	Status   string    `json:"status"`
 	Comments []Comment `json:"comments"`
-	Priority string    `json:"priority,omitempty"`
-	Category string    `json:"category,omitempty"`
-	Impact   string    `json:"impact,omitempty"`
+}
+
+func (t Thread) MarshalJSON() ([]byte, error) {
+	head, err := json.Marshal(threadHead{t.ID, t.Quote, t.Status, t.Comments})
+	if err != nil {
+		return nil, err
+	}
+
+	tail := make(map[string]string, len(t.Fields)+1)
+	for name, value := range t.Fields {
+		if value != "" {
+			tail[name] = value
+		}
+	}
+	if t.Impact != "" {
+		tail["impact"] = t.Impact
+	}
+	if len(tail) == 0 {
+		return head, nil
+	}
+
+	// Both halves are objects, and encoding/json writes map keys in sorted order, so
+	// splicing them keeps the line deterministic and therefore diff-stable.
+	rest, err := json.Marshal(tail)
+	if err != nil {
+		return nil, err
+	}
+	var b bytes.Buffer
+	b.Write(head[:len(head)-1])
+	b.WriteByte(',')
+	b.Write(rest[1:])
+	return b.Bytes(), nil
+}
+
+// Any string key that is not one of the fixed ones is a configured field. Keeping them
+// means a field removed from the config is preserved rather than erased from the file the
+// next time an unrelated thread is written.
+func (t *Thread) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	known := map[string]any{
+		"id": &t.ID, "quote": &t.Quote, "status": &t.Status,
+		"comments": &t.Comments, "impact": &t.Impact,
+	}
+	for key, into := range known {
+		if value, ok := raw[key]; ok {
+			if err := json.Unmarshal(value, into); err != nil {
+				return err
+			}
+			delete(raw, key)
+		}
+	}
+
+	for key, value := range raw {
+		var s string
+		if json.Unmarshal(value, &s) != nil {
+			continue
+		}
+		if t.Fields == nil {
+			t.Fields = map[string]string{}
+		}
+		t.Fields[key] = s
+	}
+	return nil
 }
 
 var (

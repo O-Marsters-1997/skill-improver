@@ -1,5 +1,6 @@
-// Package comments reads and writes review threads stored inline in a Markdown
-// file, using the "mc" marker format: an anchored passage is wrapped in
+// Package comments reads and writes review threads stored inline in the file under
+// review — Markdown or HTML, see Format — using the "mc" marker format: an anchored
+// passage is wrapped in
 // `<!--mc:a:ID-->text<!--mc:/a:ID-->`, and every thread occupies one
 // `<!--mc:t {JSON}-->` line inside a block at the end of the file.
 //

@@ -86,7 +86,7 @@ func writeTag(w *bufio.Writer, z *html.Tokenizer, tt html.TokenType, tag string)
 	for {
 		key, value, more := z.TagAttr()
 		name := string(key)
-		if allowedAttributes[name] && (!isURL[name] || safeURL(string(value))) {
+		if allowedAttributes[name] && (!urlAttributes[name] || safeURL(string(value))) {
 			// The tokenizer has already decoded entities, so "&#106;avascript:" has
 			// become "javascript:" by the time safeURL sees it.
 			_, _ = w.WriteString(" " + name + `="` + stdhtml.EscapeString(string(value)) + `"`)
@@ -100,7 +100,7 @@ func writeTag(w *bufio.Writer, z *html.Tokenizer, tt html.TokenType, tag string)
 
 var (
 	allowedAttributes = set("href", "src", "alt", "title", "colspan", "rowspan")
-	isURL             = set("href", "src")
+	urlAttributes     = set("href", "src")
 	allowedSchemes    = set("http", "https", "mailto")
 )
 
@@ -142,14 +142,19 @@ var allowedElements = set(
 	"details", "summary",
 )
 
-// Dropping the tags of these would leave their bodies behind as visible text: a
-// stylesheet or a program printed into the middle of the document. Everything between
-// the tags goes with them.
+// The tokenizer hands back the bodies of these as one unparsed text token, so dropping
+// only their tags would print a stylesheet, a program, or a slab of raw markup into the
+// middle of the document as visible text. Everything between the tags goes with them.
 //
-// html, head and body are absent on purpose rather than dropped whole — the output is a
-// fragment spliced into an existing page, so those tags are meaningless, but the text
-// inside them is still the reviewer's to comment on.
-var dropSubtree = set("script", "style")
+// object, embed and form are absent from allowedElements but keep their children, which
+// the tokenizer does parse: a form's labels and an object's fallback are the author's
+// words, and with no tag and no allowlisted attribute left there is nothing to embed or
+// submit. Likewise html, head and body — meaningless in a fragment spliced into an
+// existing page, but a <title> is still the reviewer's to comment on.
+var dropSubtree = set(
+	"script", "style",
+	"iframe", "noembed", "noframes", "noscript", "plaintext", "xmp",
+)
 
 func set(names ...string) map[string]bool {
 	m := make(map[string]bool, len(names))

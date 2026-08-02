@@ -1,4 +1,5 @@
-// Package server exposes one SKILL.md for review over HTTP.
+// Package server exposes one file — a SKILL.md, or any Markdown or HTML the target names
+// — for review over HTTP.
 //
 // Every mutation is a read-modify-write of the file on disk, and nothing is held in
 // memory between requests. The comment tools this replaces lose work by pushing text
@@ -38,12 +39,32 @@ var webFS embed.FS
 type Server struct {
 	path      string
 	skill     string
+	format    comments.Format
 	outDir    string
 	author    string
 	cfg       *config.Config
 	mux       *http.ServeMux
 	newID     func() string
 	writeFile sync.Mutex // ponytail: one lock for the whole file; this serves one reviewer
+}
+
+// The target's extension decides its syntax once, here, because two things depend on the
+// answer — which renderer runs and whether markers may be moved out of a code fence — and
+// they must never disagree.
+func formatOf(path string) comments.Format {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".html", ".htm":
+		return comments.HTML
+	default:
+		return comments.Markdown
+	}
+}
+
+func (s *Server) render(src []byte) ([]byte, error) {
+	if s.format == comments.HTML {
+		return render.HTMLDoc(src)
+	}
+	return render.HTML(src)
 }
 
 func New(cfg *config.Config, path, skillPath, outDir, author string) (*Server, error) {
@@ -67,7 +88,10 @@ func New(cfg *config.Config, path, skillPath, outDir, author string) (*Server, e
 		return nil, fmt.Errorf("server: resolve %s: %w", outDir, err)
 	}
 
-	s := &Server{path: absolute, skill: absoluteSkill, outDir: out, author: author, cfg: cfg, mux: http.NewServeMux(), newID: comments.NewID}
+	s := &Server{
+		path: absolute, skill: absoluteSkill, format: formatOf(absolute),
+		outDir: out, author: author, cfg: cfg, mux: http.NewServeMux(), newID: comments.NewID,
+	}
 
 	assets, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -166,7 +190,7 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		out, anchored, err := comments.Anchor(src, req.Start, req.End, req.Quote, id, s.format())
+		out, anchored, err := comments.Anchor(src, req.Start, req.End, req.Quote, id, s.format)
 		if err != nil {
 			return nil, err
 		}
@@ -316,24 +340,8 @@ func (s *Server) mutate(w http.ResponseWriter, rev string, fn func([]byte) ([]by
 	s.respond(w, out, current)
 }
 
-// The extension picks both the renderer and the anchoring rules, from one place, so the
-// two can never disagree about what syntax the file is written in.
-func (s *Server) format() comments.Format {
-	switch strings.ToLower(filepath.Ext(s.path)) {
-	case ".html", ".htm":
-		return comments.HTML
-	default:
-		return comments.Markdown
-	}
-}
-
 func (s *Server) respond(w http.ResponseWriter, src []byte, rev string) {
-	renderDoc := render.HTML
-	if s.format() == comments.HTML {
-		renderDoc = render.HTMLDoc
-	}
-
-	html, err := renderDoc(src)
+	html, err := s.render(src)
 	if err != nil {
 		writeError(w, err)
 		return

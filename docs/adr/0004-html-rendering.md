@@ -47,12 +47,17 @@ strips ASCII whitespace and control characters first, because browsers ignore th
 scheme and `java&#9;script:` is a live `javascript:` URL — the tokenizer has already decoded
 the entity by then, so obfuscation through entities is closed off too.
 
-`script` and `style` lose their bodies as well as their tags: dropping only the tags would
-leave a stylesheet or a program printed into the middle of the document. Every other
-dropped element keeps its children, which are ordinary text the reviewer may want to
-comment on. `html`, `head` and `body` are dropped for a different reason — the output is a
-fragment spliced into an existing page, so those tags are meaningless there, but a `<title>`
-is still the author's words.
+Some elements lose their bodies as well as their tags, and the line is drawn by what the
+tokenizer does with them. `script`, `style`, `iframe`, `noscript`, `noembed`, `noframes`,
+`xmp` and `plaintext` are *rawtext*: their contents arrive as one unparsed token, so
+dropping only the tags would print a stylesheet, a program, or a slab of raw markup into
+the middle of the document as visible text — escaped and inert, but nonsense.
+
+`object`, `embed` and `form` keep their children, which the tokenizer does parse. A form's
+labels and an object's fallback are the author's words, and with the tag gone and no
+allowlisted attribute left there is nothing to embed or submit. `html`, `head` and `body`
+are the same call for a different reason — meaningless in a fragment spliced into an
+existing page, but a `<title>` is still the author's words.
 
 ### Source bytes are emitted, escaped — not `Text()`
 
@@ -77,9 +82,13 @@ assertions and the fuzz target, which read the output as bytes rather than as a 
 still pass.
 
 Each CR ends its run and is written outside any span, where nothing measures it. The fix
-lives in `writeOffsetSpan`, which both renderers call, rather than in the HTML path alone:
-Markdown is not exposed today only because goldmark leaves CR outside its segments, and
-that is not a property worth depending on.
+lives in `writeOffsetSpan`, which both renderers call, because **Markdown had the same bug**.
+Goldmark does not keep CR out of its segments: a fenced code block in a CRLF file rendered
+as one span containing `code\r\n`, and every anchor inside it was already drifting a byte
+per line. Fixing only the path this ADR is about would have left the older one broken.
+
+This is the one place Markdown output is not byte-identical to before, and the exception is
+deliberate: it changes only sources containing CR, and only by correcting them.
 
 ### Fence expansion is gated on the host format
 

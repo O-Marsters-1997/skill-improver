@@ -1,6 +1,6 @@
-// Package render turns Markdown into HTML that remembers where every character
+// Package render turns a source file into HTML that remembers where every character
 // came from: each run of source text is wrapped in a span carrying its byte offset
-// as data-o.
+// as data-o. HTML renders a Markdown source; HTMLDoc renders an HTML one.
 //
 // That is the whole reason this tool renders server-side. The browser never has to
 // reverse-engineer which part of the source a selection came from, it reads an

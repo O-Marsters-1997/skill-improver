@@ -30,6 +30,23 @@ func TestHTMLDoc(t *testing.T) {
 			excludes: []string{"script", "alert(1)"},
 		},
 		{
+			// The tokenizer hands these back as one unparsed text token, so dropping only
+			// the tags would print raw markup into the page as visible text.
+			name: "rawtext elements lose their bodies too",
+			src: "<iframe src=\"/x\"><script>alert(1)</script></iframe>" +
+				"<noscript><b>no js</b></noscript><xmp><i>x</i></xmp><p>kept</p>\n",
+			contains: []string{`<span data-o="106">kept</span>`},
+			excludes: []string{"iframe", "alert(1)", "no js", "noscript", "&lt;"},
+		},
+		{
+			// Their children are parsed markup, not a raw slab: with the tag gone and no
+			// allowlisted attribute left there is nothing to embed or submit.
+			name:     "object and form lose their tags but keep their words",
+			src:      `<object data="/x"><b>fallback</b></object><form action="/s"><label>Email</label></form>` + "\n",
+			contains: []string{"<b><span data-o=", "fallback", "Email"},
+			excludes: []string{"object", "<form", "action", "data="},
+		},
+		{
 			name:     "only allowlisted attributes survive",
 			src:      `<a href="/docs" title="t" onclick="evil()" class="x" data-o="999">link</a>` + "\n",
 			contains: []string{`<a href="/docs" title="t">`},

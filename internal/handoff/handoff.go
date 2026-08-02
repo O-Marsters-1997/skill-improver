@@ -83,7 +83,11 @@ type Payload struct {
 	Suggestions []Suggestion `json:"improvement_suggestions"`
 }
 
-// Resolved threads and threads whose comments have all been retracted are left out.
+// Build turns one document's threads into a payload. Resolved threads and threads whose
+// comments have all been retracted are left out.
+//
+// Submit is what completes the result: Mode and each Suggestion's File depend on the
+// paths of the review, which Build is not given.
 func Build(cfg *config.Config, threads []comments.Thread, skillName, skillPath string) Payload {
 	payload := Payload{
 		SkillName:   skillName,

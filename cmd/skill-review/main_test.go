@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/urfave/cli/v3"
@@ -98,4 +102,39 @@ func TestMissingPathExitsTwo(t *testing.T) {
 	if exit.ExitCode() != 2 {
 		t.Errorf("exit code = %d, want 2", exit.ExitCode())
 	}
+}
+
+// A typo'd --skill would otherwise produce a payload naming a skill nobody can apply it
+// to, and say so nowhere.
+func TestExplicitSkillMustBeASkill(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "report.md")
+	if err := os.WriteFile(target, []byte("# Report\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillDir := filepath.Join(dir, "ideate")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: ideate\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("a skill that is not there is named in the error", func(t *testing.T) {
+		cmd := command()
+		err := cmd.Run(t.Context(), []string{"skill-review", "handoff", "--skill", filepath.Join(dir, "idaete"), target})
+		if err == nil || !strings.Contains(err.Error(), "--skill") {
+			t.Errorf("err = %v; want it to name the flag", err)
+		}
+	})
+
+	t.Run("a real skill is accepted", func(t *testing.T) {
+		cmd := command()
+		cmd.Writer = io.Discard
+		if err := cmd.Run(t.Context(), []string{
+			"skill-review", "handoff", "--skill", skillDir, "--out", filepath.Join(dir, "out"), target,
+		}); err != nil {
+			t.Errorf("Run: %v", err)
+		}
+	})
 }

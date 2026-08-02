@@ -470,8 +470,8 @@ func TestServesThePage(t *testing.T) {
 	}
 }
 
-// The split the whole feature is: the file served for review and the skill the payload
-// edits are two paths.
+// The split that is the whole feature: the file served for review and the skill the
+// payload edits are two paths.
 func TestHandoffNamesTheSkillNotTheTarget(t *testing.T) {
 	dir := t.TempDir()
 	skillDir := filepath.Join(dir, "skills", "ideate")

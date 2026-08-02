@@ -209,7 +209,7 @@ func UpdaterName(path string) (string, error) {
 		return "", fmt.Errorf("%s is not an absolute path", path)
 	}
 
-	_, file, err := skill.Resolve(path)
+	file, err := skill.Resolve(path)
 	if err != nil {
 		return "", err
 	}

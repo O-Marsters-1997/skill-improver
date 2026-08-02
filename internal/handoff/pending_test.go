@@ -118,6 +118,31 @@ func TestSubmitModeIsDerivedFromThePaths(t *testing.T) {
 		}
 	})
 
+	// The other half of the farm: some installs link the directory, some link the
+	// SKILL.md into a directory that is otherwise real.
+	t.Run("a SKILL.md reached through a symlink is instructions", func(t *testing.T) {
+		root := t.TempDir()
+		actual := filepath.Join(root, "agents", "ideate")
+		writeSkill(t, actual)
+
+		linked := filepath.Join(root, "claude", "ideate")
+		if err := os.MkdirAll(linked, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(actual, skill.FileName), filepath.Join(linked, skill.FileName)); err != nil {
+			t.Fatal(err)
+		}
+		doc := Doc{Path: filepath.Join(actual, skill.FileName), Src: []byte(reviewed)}
+
+		got, err := Submit(config.Default(), filepath.Join(root, "out"), linked, []Doc{doc})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Payload.Mode != ModeInstructions {
+			t.Errorf("mode = %q; want %q", got.Payload.Mode, ModeInstructions)
+		}
+	})
+
 	// The default: no --skill, so the target is the skill and nothing changes.
 	t.Run("reviewing a SKILL.md with no separate skill is instructions", func(t *testing.T) {
 		root := t.TempDir()

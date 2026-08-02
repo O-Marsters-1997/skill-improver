@@ -50,6 +50,10 @@ load-bearing rather than defensive: `~/.claude/skills/*` is largely a symlink fa
 `~/.agents/skills/*`, so without it every skill installed the normal way computes as
 `output` and every prompt asks the updater to infer instructions it could have read.
 
+The skill's directory is `filepath.Dir` of the **resolved `SKILL.md`**, not the resolved
+directory: some installs link the skill directory and some link the `SKILL.md` into a
+directory that is otherwise real, and only the former survives resolving the directory.
+
 The distinction matters because it changes what the updater is being asked to do. In
 `instructions` mode a suggestion is about the text it is anchored to. In `output` mode it
 is an observation about a document the skill *produced*, and the updater has to infer
@@ -72,12 +76,16 @@ the threads were parsed out of, so it cannot drift from where the comment actual
 `config.reserved`, because configured fields are written flat and a `[[field]]` named
 `file` would overwrite it.
 
-### `skill_path` is what the reviewer typed
+### `skill_path` is the path the reviewer gave, made absolute
 
-`Submit` resolves the skill to its directory and its `SKILL.md` internally — to read the
-name and to derive the mode — but the payload carries the path as given. A reviewer who
-passes `~/.claude/skills/ideate` should see that in the payload, not the resolved
-`~/.agents/skills/ideate/SKILL.md` they have never heard of.
+`Submit` resolves the skill to its `SKILL.md` internally — to read the name and to derive
+the mode — but the payload carries the path as given, absolutised and nothing more. A
+reviewer who passes `~/.claude/skills/ideate` should see that in the payload, not the
+`~/.agents/skills/ideate/SKILL.md` behind the symlink, which they have never heard of.
+
+An explicit `--skill` is checked before anything is served: it has to resolve to a
+`SKILL.md` with a `name:`, or the command fails naming the flag. Omitting it cannot fail,
+because then it is the target and the target has already been read.
 
 ## Consequences
 

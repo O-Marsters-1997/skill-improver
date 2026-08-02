@@ -58,18 +58,19 @@ func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, e
 		return Result{}, fmt.Errorf("handoff: create %s: %w", outDir, err)
 	}
 
-	skillDir, skillMD, err := skill.Resolve(skillPath)
+	skillMD, err := skill.Resolve(skillPath)
 	if err != nil {
 		return Result{}, err
 	}
 	// A target that is not a skill at all — a lone report reviewed without --skill —
-	// simply has no name, exactly as reading the reviewed bytes used to give.
-	frontmatter, _ := os.ReadFile(skillMD)
+	// simply has no name, exactly as reading the reviewed bytes used to give. An
+	// explicit --skill that names no skill is rejected by the CLI, before it gets here.
+	skillSrc, _ := os.ReadFile(skillMD)
 
 	payload := Payload{
-		SkillName:   skill.Name(frontmatter),
+		SkillName:   skill.Name(skillSrc),
 		SkillPath:   skillPath,
-		Mode:        deriveMode(skillDir, docs),
+		Mode:        deriveMode(skillMD, docs),
 		Suggestions: []Suggestion{},
 	}
 	for _, d := range docs {
@@ -127,9 +128,14 @@ func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, e
 // A document counts as instructions only when every reviewed file resolves inside the
 // skill. Symlinks are resolved on both sides first: ~/.claude/skills is largely a symlink
 // farm into ~/.agents/skills, and without that step every real skill reads as output.
-func deriveMode(skillDir string, docs []Doc) string {
+//
+// The skill's directory is taken from the resolved SKILL.md rather than resolved as a
+// directory, because either half of the pair can be the link — the farm holds directory
+// symlinks in some installs and file symlinks in others.
+func deriveMode(skillMD string, docs []Doc) string {
+	skillDir := filepath.Dir(resolveLinks(skillMD))
 	for _, d := range docs {
-		rel, err := filepath.Rel(resolveLinks(skillDir), resolveLinks(d.Path))
+		rel, err := filepath.Rel(skillDir, resolveLinks(d.Path))
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return ModeOutput
 		}

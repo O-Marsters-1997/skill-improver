@@ -8,9 +8,11 @@ package main
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -77,6 +79,24 @@ func load(cmd *cli.Command) (*config.Config, error) {
 	return cfg, nil
 }
 
+// resolveSkill defaults --skill to the target. An explicit one has to name a real skill:
+// a typo would otherwise produce a payload pointing the updater at a directory it cannot
+// edit, and say nothing about it until someone reads the JSON.
+func resolveSkill(cmd *cli.Command, target string) (string, error) {
+	given := cmd.String("skill")
+	path, err := filepath.Abs(cmp.Or(given, target))
+	if err != nil {
+		return "", err
+	}
+	if given == "" {
+		return path, nil
+	}
+	if _, err := config.UpdaterName(path); err != nil {
+		return "", fmt.Errorf("--skill %s: %w", given, err)
+	}
+	return path, nil
+}
+
 func serveCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "serve",
@@ -97,10 +117,14 @@ func serve(_ context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	skillPath, err := resolveSkill(cmd, path)
+	if err != nil {
+		return err
+	}
 
 	// A set-but-empty $USER satisfies the env source, so the fallback is applied here
 	// rather than left to the flag default.
-	reviewer, err := server.New(cfg, path, cmd.String("skill"), cmd.String("out"), cmp.Or(cmd.String("author"), "reviewer"))
+	reviewer, err := server.New(cfg, path, skillPath, cmd.String("out"), cmp.Or(cmd.String("author"), "reviewer"))
 	if err != nil {
 		return err
 	}

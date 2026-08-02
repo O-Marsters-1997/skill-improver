@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -38,7 +37,7 @@ func handoffAction(_ context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	skillPath, err := filepath.Abs(cmp.Or(cmd.String("skill"), path))
+	skillPath, err := resolveSkill(cmd, path)
 	if err != nil {
 		return err
 	}

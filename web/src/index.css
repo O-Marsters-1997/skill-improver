@@ -143,6 +143,12 @@
     @apply text-muted-foreground text-sm mt-0 whitespace-pre-wrap;
   }
 
+  /* Hidden, not stripped — the offsets every comment anchor is stored against are counted
+     over the whole file, frontmatter included. */
+  .hide-frontmatter #doc .frontmatter {
+    @apply hidden;
+  }
+
   #doc mark.mc,
   #doc div.mc {
     @apply bg-highlight rounded-sm text-inherit cursor-pointer;

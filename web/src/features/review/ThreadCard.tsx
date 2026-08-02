@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,38 @@ interface ThreadCardProps {
   onToggleStatus: () => void;
   onDelete: () => void;
   onFieldChange: (field: string, value: string) => void;
+}
+
+// Only the rendered element knows whether the text actually overflows three lines, so the
+// control is measured into existence rather than always drawn — a one-line comment gets no
+// "Show more". Measuring while expanded would always report "fits" and take the control
+// away with no way back, hence the guard.
+function Clamped({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (element && !expanded) setOverflows(element.scrollHeight > element.clientHeight + 1);
+  }, [children, expanded]);
+
+  return (
+    <>
+      <span ref={ref} className={cn("block whitespace-pre-wrap", !expanded && "line-clamp-3")}>
+        {children}
+      </span>
+      {overflows && (
+        <button
+          type="button"
+          onClick={() => setExpanded((open) => !open)}
+          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          {expanded ? "Show less" : "… Show more"}
+        </button>
+      )}
+    </>
+  );
 }
 
 export function ThreadCard({ thread, fields, selected, onReply, onToggleStatus, onDelete, onFieldChange }: ThreadCardProps) {
@@ -38,11 +70,11 @@ export function ThreadCard({ thread, fields, selected, onReply, onToggleStatus, 
       </blockquote>
 
       {thread.comments.filter((c) => !c.deleted).map((comment) => (
-        <p key={comment.id} className="text-sm whitespace-pre-wrap">
+        <p key={comment.id} className="text-sm">
           <span className="block text-xs text-muted-foreground">
             {comment.author} · {comment.ts}
           </span>
-          {comment.body}
+          <Clamped>{comment.body}</Clamped>
         </p>
       ))}
 

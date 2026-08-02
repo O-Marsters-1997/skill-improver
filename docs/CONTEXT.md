@@ -1,20 +1,18 @@
 # Context
 
-`skill-review` renders a Markdown document as a page you can highlight and comment on,
-then hands the comments to a skill that applies them — for the author, `skill-updater`,
-which edits the skill in its source repo and opens a draft PR. The document is usually the
-skill's own SKILL.md, but it does not have to be: point `--skill` somewhere else and the
-comments become suggestions about the skill that produced what you are reading.
+`skill-review` renders a **target** — a file or a directory — as a page you can highlight
+and comment on, then hands the comments to a skill that applies them. For the author that
+is `skill-updater`, which edits the skill in its source repo and opens a draft PR. The
+target is not necessarily the skill: you can review a document a skill *produced* and have
+the comments land on the skill that produced it.
 
 What the review asks for and who receives it are configured, not compiled in: the triage
 fields and the updater skill come from a TOML file, and the built-in defaults are what the
 tool hardcoded before it had one.
 
 ```
-skill-review path/to/SKILL.md          # serves http://127.0.0.1:8420
-skill-review --skill ~/.claude/skills/ideate report.md
-                                       # review the output, edit the skill
-skill-review config init               # write the defaults out to edit
+skill-review [--skill <path>] <target>     # serves http://127.0.0.1:8420
+skill-review config init                   # write the defaults out to edit
 go test ./...
 ```
 
@@ -27,35 +25,45 @@ submitting sometimes silently did nothing.
 
 The third is the one the architecture answers. Those extensions **push** text into a
 terminal or the clipboard, where it can drop with no trace. Here, every comment is written
-into the SKILL.md the moment it is made, and Submit is a pure function of what is already
-on disk. A failed submit loses nothing; click it again.
+into the reviewed file the moment it is made, and Submit is a pure function of what is
+already on disk. A failed submit loses nothing; click it again.
 
 Because the comments live in the file, they can also be collected without this tool at all.
-`skill-review handoff path/to/SKILL.md` prints the payload and prompt with no server
-involved, and the `/skill-comments` slash command is a thin wrapper over it. That path runs
-the same `handoff.Submit` the button does rather than reimplementing it, so a broken button
-is never a dead end and the two can never disagree about the schema.
+`skill-review handoff <target>` prints the payload and prompt with no server involved, and
+the `/skill-comments` slash command is a thin wrapper over it. That path runs the same
+`handoff.Submit` the button does rather than reimplementing it, so a broken button is never
+a dead end and the two can never disagree about the schema.
 
-Two non-goals, both deliberate. There is no editor — you review, Claude writes, so a
-rendered view you can highlight is the whole requirement. And there is no eval harness;
-evals are run separately, by choice, after a skill changes.
+Two non-goals, both deliberate, and the second is narrower than it first sounds. There is
+no editor — you review, Claude writes, so a rendered view you can highlight is the whole
+requirement. And there is no eval **harness**: no test sets, no judges, no pass rates, no
+scores. That is not the same as no *evaluation*. Reviewing a document a skill produced is
+evaluation, and it is squarely in scope — what stays out is the machinery, not the
+judgement.
+
+One smaller choice is worth recording here rather than in an ADR. Listing the skills on
+this machine is a native Go glob over the skill directories, not a shell-out to
+`npx skills`. That was tried and rejected on evidence: it was not installed, it reported no
+plugin skills at all, and it carries no descriptions to show. Reversing the decision is a
+few lines if it ever grows them, which is why this is a note.
 
 ## Vocabulary
 
 Terms mean exactly this throughout the code, the API and the UI.
 
-**Target** — the file being read and commented on. The one positional argument.
+**Target** — the file or directory being read and commented on. A directory target is the
+set of reviewable files under it; a file target is a set of one, so there is only ever one
+case to reason about.
 
-**Skill** — the skill the payload edits. `--skill`, defaulting to the target. The two are
-different whenever the thing under review is something the skill *produced* rather than
-the skill itself, which is the review with the most to say about whether a skill works.
+**Skill** — the skill the payload is aimed at, and so the thing the updater ends up editing.
+It defaults to the target, and the two are the same whenever you are reviewing a skill's own
+instructions. They part company when the target is something the skill produced.
 
-**Mode** — `instructions` when the target resolves inside the skill directory, `output`
-when it does not. **Derived from the two paths, never declared**, because a flag would let
-them disagree. Symlinks are resolved on both sides first, or every skill installed into
-`~/.claude/skills` as a link would read as `output`. The mode is what the prompt changes:
-in `output` mode the updater is told to infer which instruction caused each observation
-and edit the `SKILL.md`, not the reviewed file.
+**Mode** — `instructions` when the reviewed file **resolves** inside the skill directory,
+`output` when it does not. **Derived from the two paths, never declared.** Resolved, not
+merely prefixed: the skill directories are largely a symlink farm, so a plain path comparison
+would call every real skill `output`. There is no flag for it either, because a flag is a
+second source of truth and the two would eventually disagree.
 
 **Anchor** — a passage of the document a thread is attached to. Written as a **marker**
 pair in the source: `<!--mc:a:ID-->the passage<!--mc:/a:ID-->`. Because the markers live in
@@ -66,7 +74,8 @@ numbers.
 `resolved`, and a list of comments. All threads live on one `<!--mc:t {JSON}-->` line each,
 inside a block at the end of the file. The format is `mc`, borrowed from the Markdown
 Collab extension so other tools that understand it can read our files; the implementation
-here is our own.
+here is our own. A thread never records which file it belongs to: it lives in that file, so
+file identity is implicit in where the markers are and cannot drift away from them.
 
 **Quote** — the source text the markers wrap. Not the same as what the browser reported the
 reviewer selected: a selection covering `the **lazy** fix` reads as "the lazy fix" in the
@@ -75,11 +84,15 @@ the truth.
 
 **Run** — one stretch of source text as the renderer emitted it, carrying its starting byte
 offset in `data-o`. Offsets are **bytes**, not characters — the browser converts through
-`TextEncoder` before sending them.
+`TextEncoder` before sending them. Two renderers emit runs, one for Markdown targets and one
+for HTML, and the word means the same in both: they are held to a single invariant, that a
+run's text is exactly the source bytes at the offset it advertises.
 
-**Rev** — a stamp of the file's modification time and size. The page sends back the rev it
+**Rev** — a stamp of a file's modification time and size. The page sends back the rev it
 last read; a mismatch means the file changed underneath it, so the write is refused with
 409 and the page reloads. This is what stops an edit made in the editor from being clobbered.
+A rev is **per file**, not per review: a review spanning several files carries one for each,
+so an outside edit to one of them invalidates that file alone and the rest keep working.
 
 **Field** — one unit of triage: a name, a label, a list of values and a default, declared in
 the config. Each one is a control on every thread card and a key on every suggestion, so the
@@ -92,13 +105,13 @@ simply not offered. The defaults are `priority` (high/medium/low), `category`
 model slipped this once", so a fluke is not baked into a permanent edit.
 
 **Suggestion** and **payload** — the updater's vocabulary, not ours. A thread becomes one
-suggestion carrying the thread's `id`, the absolute `file` it was anchored in, one key per
-field, the suggestion text and an `expected_impact`; the payload is the set of them plus
-the skill's name, path and mode, ordered by the first field in the order its values are
-listed. The name comes from `<skill>/SKILL.md`, never from the reviewed bytes. The
-composer asks for none of it: fields are set on the thread cards, where every other thread
-is in view, because ranking one comment against nothing is not a judgement anyone can
-make.
+suggestion carrying the thread's `id`, the **absolute** `file` it was anchored in, one key
+per field, the suggestion text and an `expected_impact`; the payload is the set of them plus
+the skill's name and path and the **mode**, ordered by the first field in the order its
+values are listed. The `file` is per suggestion because one payload can span several files;
+the `mode` is on the payload because it describes the whole review. The composer asks for
+none of it: fields are set on the thread cards, where every other thread is in view, because
+ranking one comment against nothing is not a judgement anyone can make.
 
 **Pending** and **archive** — `.skill-review/pending.json` holds every open thread that has
 not yet been handed off. It is regenerated on each Submit, so a retriage, a reply or a
@@ -113,7 +126,7 @@ local record and is never handed off again.
 | Package | Holds |
 | --- | --- |
 | `internal/comments` | the mc format — parse, anchor, upsert, remove |
-| `internal/render` | Markdown → HTML with byte offsets stamped on every run |
+| `internal/render` | Markdown and HTML → a page, with byte offsets on every run |
 | `internal/config` | the TOML file — fields, updater, defaults, validation |
 | `internal/skill` | the `name:` in a SKILL.md's frontmatter, and directory → SKILL.md |
 | `internal/handoff` | threads → payload (`Build`), and payload → disk (`Submit`) |

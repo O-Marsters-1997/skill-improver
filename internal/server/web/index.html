@@ -17,6 +17,20 @@
       <article id="doc" aria-label="Skill under review"></article>
 
       <aside>
+        <nav id="explorer" aria-label="Files">
+          <div class="row">
+            <span>
+              <label for="file-filter">Show</label>
+              <select id="file-filter">
+                <option value="markdown" selected>Markdown</option>
+                <option value="all">All files</option>
+              </select>
+            </span>
+          </div>
+          <ul id="file-list"></ul>
+          <p id="file-filter-note" class="hint" hidden></p>
+        </nav>
+
         <form id="composer" hidden>
           <h2>New comment</h2>
           <blockquote id="composer-quote"></blockquote>

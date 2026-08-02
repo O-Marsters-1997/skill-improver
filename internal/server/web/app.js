@@ -6,10 +6,18 @@ const threadList = document.getElementById("threads");
 const toast = document.getElementById("toast");
 const selectionMenu = document.getElementById("selection-menu");
 const handoffPanel = document.getElementById("handoff");
+const fileList = document.getElementById("file-list");
+const filterNote = document.getElementById("file-filter-note");
 
 // fields comes from the server, so the controls here and the payload the server builds
 // can never describe different schemas.
-const state = { rev: null, threads: [], fields: [], pending: null, selected: null };
+//
+// filter decides which rows the explorer draws and nothing else. No request carries it,
+// which is what stops it changing what Submit ships — keep it out of every payload.
+const state = { rev: null, threads: [], fields: [], files: [], filter: "markdown", pending: null, selected: null };
+
+const MARKDOWN = new Set([".md", ".markdown"]);
+const shown = (file) => state.filter === "all" || MARKDOWN.has(file.ext);
 
 const encoder = new TextEncoder();
 const byteLength = (text) => encoder.encode(text).length;
@@ -221,6 +229,9 @@ function draw(payload) {
   document.getElementById("empty").hidden = state.threads.length > 0;
   highlight(state.selected);
   hideSelectionMenu();
+  // Refetched rather than counted from state.threads: the badge has to be the number that
+  // would ship, and only the server applies those rules.
+  run(loadFiles);
 }
 
 function highlight(id) {
@@ -233,9 +244,44 @@ function highlight(id) {
   }
 }
 
+function nameHidden() {
+  return state.files
+    .filter((file) => !shown(file) && file.threads > 0)
+    .map((file) => file.rel)
+    .join(", ");
+}
+
+function drawFiles() {
+  fileList.replaceChildren(
+    ...state.files.filter(shown).map((file) =>
+      element(
+        "li",
+        { className: "file" },
+        element("span", { className: "name", textContent: file.rel }),
+        file.threads > 0 ? element("span", { className: "count", textContent: String(file.threads) }) : null,
+      ),
+    ),
+  );
+
+  const hidden = nameHidden();
+  filterNote.textContent = hidden ? `Hidden, and still handed off: ${hidden}` : "";
+  filterNote.hidden = hidden === "";
+}
+
+async function loadFiles() {
+  state.files = await api("/api/files");
+  drawFiles();
+}
+
 async function load() {
   draw(await api("/api/doc"));
 }
+
+// Redrawing only — nothing here may reach the server.
+document.getElementById("file-filter").addEventListener("change", (event) => {
+  state.filter = event.target.value;
+  drawFiles();
+});
 
 doc.addEventListener("mouseup", () => setTimeout(captureSelection, 0));
 doc.addEventListener("keyup", (event) => {
@@ -323,6 +369,8 @@ threadList.addEventListener("change", (event) => {
 document.getElementById("submit-all").addEventListener("click", () => {
   run(async () => {
     const result = await api("/api/handoff", {});
+    await loadFiles();
+    // The server's total, never the filtered view's.
     const count = result.payload.improvement_suggestions.length;
     const prompt = document.getElementById("handoff-prompt");
 
@@ -337,9 +385,11 @@ document.getElementById("submit-all").addEventListener("click", () => {
     document.getElementById("handoff-copy").hidden = false;
 
     const noun = `${count} suggestion${count === 1 ? "" : "s"}`;
+    const hidden = nameHidden();
+    const from = hidden ? ` — including ${hidden}, which the filter is hiding` : "";
     document.getElementById("handoff-summary").textContent = result.changed
-      ? `${noun} pending in ${result.file}`
-      : `Nothing new — ${noun} still pending in ${result.file}`;
+      ? `${noun} pending in ${result.file}${from}`
+      : `Nothing new — ${noun} still pending in ${result.file}${from}`;
     prompt.textContent = result.prompt;
     prompt.hidden = false;
     handoffPanel.hidden = false;

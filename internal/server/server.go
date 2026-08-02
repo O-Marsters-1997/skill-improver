@@ -101,7 +101,7 @@ func New(cfg *config.Config, target, skillPath, outDir, author string) (*Server,
 	if err != nil {
 		return nil, fmt.Errorf("server: embedded assets: %w", err)
 	}
-	s.mux.Handle("GET /", http.FileServerFS(assets))
+	s.mux.Handle("GET /", assetHandler(assets))
 	s.mux.HandleFunc("GET /api/files", s.handleFiles)
 	s.mux.HandleFunc("GET /api/doc", s.handleDoc)
 	s.mux.HandleFunc("POST /api/anchor", s.handleAnchor)
@@ -110,6 +110,25 @@ func New(cfg *config.Config, target, skillPath, outDir, author string) (*Server,
 	s.mux.HandleFunc("POST /api/handoff", s.handleHandoff)
 	s.mux.HandleFunc("POST /api/file/clear", s.handleFileClear)
 	return s, nil
+}
+
+// The built frontend (web/, built by `just web`) is generated, not committed, so a checkout
+// that hasn't run it yet gets a page saying so — not a directory listing, which is what
+// http.FileServer renders (with a 200) when index.html is missing.
+func assetHandler(fsys fs.FS) http.Handler {
+	if _, err := fs.Stat(fsys, "index.html"); err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			page, err := fs.ReadFile(fsys, "not-built.html")
+			if err != nil {
+				http.Error(w, "frontend not built: run `just web`", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write(page)
+		})
+	}
+	return http.FileServerFS(fsys)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }

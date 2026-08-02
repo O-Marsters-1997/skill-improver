@@ -1,0 +1,66 @@
+version: 2
+
+# The frontend is gitignored (see internal/server/web/ + .gitignore) and only ever built
+# here, in CI, straight before `go build` embeds it — see internal/server/server.go's
+# `//go:embed web`. Run once, not per-build: identical across every GOOS/GOARCH below.
+#
+# Top-level before.hooks only accepts plain command strings (no per-hook `dir:` — that
+# richer form exists only for build-level hooks), hence bun's own --cwd flag.
+before:
+  hooks:
+    - bun install --frozen-lockfile --cwd web
+    - bun run --cwd web build
+
+# Must stay false (the default). With proxy mode on, GoReleaser builds from the
+# module-proxy zip while the hook above wrote into the working tree — a green release
+# would ship the "frontend not built" fallback page.
+gomod:
+  proxy: false
+
+builds:
+  - id: skill-review
+    main: ./cmd/skill-review
+    binary: skill-review
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - id: skill-review
+    ids: [skill-review]
+    formats: [tar.gz]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+
+homebrew_casks:
+  - name: skill-review
+    ids: [skill-review]
+    binaries: [skill-review]
+    repository:
+      owner: O-Marsters-1997
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/O-Marsters-1997/skill-improver"
+    description: "Review a SKILL.md in the browser, anchored to the source file"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    hooks:
+      post:
+        install: |
+          if OS.mac? && system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/skill-review"]
+          end

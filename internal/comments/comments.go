@@ -47,10 +47,10 @@ type Comment struct {
 }
 
 // Fields and Impact are extensions to the mc format. Fields holds whatever triage the
-// config asks for — priority and category, by default — captured while commenting so the
-// handoff payload is complete before Submit is clicked. They are written flat onto the
-// thread object rather than nested, so a file written before the schema was configurable
-// still reads, and other tools that read mc ignore the keys they do not know.
+// config asks for, captured while commenting so the handoff payload is complete before
+// Submit is clicked. They are written flat onto the thread object rather than nested, so
+// a file written before the schema was configurable still reads, and other tools that
+// read mc ignore the keys they do not know.
 type Thread struct {
 	ID       string
 	Quote    string

@@ -40,7 +40,6 @@ type Config struct {
 	Updater Updater `toml:"updater"`
 }
 
-// The two fields this tool hardcoded before it had a config, in the order it sorted by.
 func Default() *Config {
 	return &Config{
 		Fields: []Field{
@@ -54,6 +53,14 @@ func Default() *Config {
 				Name:    "category",
 				Label:   "Category",
 				Values:  []string{"instructions", "tools", "examples", "error_handling", "structure", "references"},
+				Default: "instructions",
+			},
+			// So a one-off model fluke can be marked as such instead of being baked
+			// into a permanent instruction edit.
+			{
+				Name:    "cause",
+				Label:   "Cause",
+				Values:  []string{"instructions", "execution"},
 				Default: "instructions",
 			},
 		},

@@ -6,8 +6,8 @@ straight into the `SKILL.md` as you make them, so there is no in-memory review s
 lose — the file on disk is the only state.
 
 What the triage asks for and which skill receives the payload are
-[configurable](#configuration); out of the box it is a priority and a category, and the
-prompt spells the work out rather than naming a skill.
+[configurable](#configuration); out of the box it is a priority, a category and a cause, and
+the prompt spells the work out rather than naming a skill.
 
 See [`docs/CONTEXT.md`](docs/CONTEXT.md) for the vocabulary (anchor, thread, quote, field,
 rev) and the reasoning behind the design;
@@ -145,6 +145,12 @@ default = "medium"     # must be one of values
 name    = "category"
 label   = "Category"
 values  = ["instructions", "tools", "examples", "error_handling", "structure", "references"]
+default = "instructions"
+
+[[field]]
+name    = "cause"
+label   = "Cause"
+values  = ["instructions", "execution"]
 default = "instructions"
 
 # Optional. Its name is read from the frontmatter and used in the handoff prompt and

@@ -120,8 +120,8 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		// Priority and category are left unset: they are comparative judgements,
-		// made on the thread cards once there is something to compare against.
+		// The triage fields are left unset: they are comparative judgements, made
+		// on the thread cards once there is something to compare against.
 		return comments.Upsert(out, comments.Thread{
 			ID:       id,
 			Quote:    anchored,

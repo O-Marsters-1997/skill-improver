@@ -10,7 +10,7 @@
     <header>
       <h1 id="skill-name">skill-review</h1>
       <code id="skill-path"></code>
-      <button id="submit-all" type="button">Submit all</button>
+      <button id="submit-all" type="button">Submit this file</button>
     </header>
 
     <main>
@@ -28,7 +28,6 @@
             </span>
           </div>
           <ul id="file-list"></ul>
-          <p id="file-filter-note" class="hint" hidden></p>
         </nav>
 
         <form id="composer" hidden>
@@ -46,6 +45,7 @@
         </form>
 
         <p id="empty" class="hint">Highlight a passage in the document, then choose Comment.</p>
+        <button id="discard-all" class="quiet" type="button" hidden>Discard all comments</button>
         <div id="threads"></div>
       </aside>
     </main>

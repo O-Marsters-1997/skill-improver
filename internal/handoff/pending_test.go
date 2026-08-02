@@ -1,6 +1,7 @@
 package handoff
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,6 +158,96 @@ func TestSubmitModeIsDerivedFromThePaths(t *testing.T) {
 			t.Errorf("payload = %+v", got.Payload)
 		}
 	})
+}
+
+// Submit is called once per file by the server now, so a later call for a different
+// document must add to what an earlier call left pending, not replace it.
+func TestSubmitAccumulatesAcrossCalls(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "ideate")
+	writeSkill(t, skillDir)
+	outDir := filepath.Join(root, "out")
+
+	docA := writeDoc(t, filepath.Join(root, "a.md"))
+	docB := writeDoc(t, filepath.Join(root, "b.md"), strings.ReplaceAll(reviewed, "aaa", "bbb"))
+
+	first, err := Submit(config.Default(), outDir, skillDir, []Doc{docA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Payload.Suggestions) != 1 || first.Payload.Suggestions[0].File != docA.Path {
+		t.Fatalf("first submit = %+v", first.Payload.Suggestions)
+	}
+
+	second, err := Submit(config.Default(), outDir, skillDir, []Doc{docB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Payload.Suggestions) != 2 {
+		t.Fatalf("got %d suggestions; want doc A's to survive alongside doc B's", len(second.Payload.Suggestions))
+	}
+	if got := second.Submitted; len(got) != 1 || got[0] != "bbb" {
+		t.Errorf("submitted = %v; want only bbb, the ids this call drew from docB", got)
+	}
+}
+
+// A retriage between two submits of the same document has to win over the version
+// already sitting in pending.json — the merge keys on id, this call's copy replacing it.
+func TestSubmitOfTheSameDocReplacesItsOwnEntry(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "ideate")
+	writeSkill(t, skillDir)
+	outDir := filepath.Join(root, "out")
+
+	retriaged := strings.Replace(reviewed, `"status":"open"`, `"status":"open","priority":"high"`, 1)
+	docV1 := writeDoc(t, filepath.Join(root, "a.md"))
+	docV2 := writeDoc(t, filepath.Join(root, "a.md"), retriaged)
+
+	if _, err := Submit(config.Default(), outDir, skillDir, []Doc{docV1}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Submit(config.Default(), outDir, skillDir, []Doc{docV2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Payload.Suggestions) != 1 {
+		t.Fatalf("got %d suggestions; want the resubmit to replace, not duplicate", len(got.Payload.Suggestions))
+	}
+	if got.Payload.Suggestions[0].Fields["priority"] != "high" {
+		t.Errorf("suggestion = %+v; want the retriaged priority", got.Payload.Suggestions[0])
+	}
+}
+
+// Submitted is what the caller may now strip from the document — an id already archived
+// must never come back for a second round, so it must not appear there either.
+func TestSubmitExcludesArchivedFromSubmitted(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "ideate")
+	writeSkill(t, skillDir)
+	outDir := filepath.Join(root, "out")
+	doc := writeDoc(t, filepath.Join(root, "a.md"))
+
+	archive, err := json.Marshal(Payload{Suggestions: []Suggestion{{ID: "aaa"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "handoff-old.json"), archive, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Submit(config.Default(), outDir, skillDir, []Doc{doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Submitted) != 0 {
+		t.Errorf("submitted = %v; want the archived id excluded", got.Submitted)
+	}
+	if len(got.Payload.Suggestions) != 0 {
+		t.Errorf("payload = %+v; want the archived thread left out entirely", got.Payload.Suggestions)
+	}
 }
 
 func TestPromptTellsTheUpdaterWhatItIsLookingAt(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +25,10 @@ type Result struct {
 	Prompt  string  `json:"prompt"`
 	Changed bool    `json:"changed"`
 	Payload Payload `json:"payload"`
+	// Submitted is the ids this call drew from docs, minus any already archived — the
+	// ones the caller may now strip from those documents. It excludes ids the payload
+	// carries only because an earlier, different submit put them there.
+	Submitted []string `json:"submitted"`
 }
 
 // The embedded payload flattens, so the file stays a superset of what the updater reads:
@@ -41,10 +46,12 @@ type Doc struct {
 	Src  []byte
 }
 
-// Submit regenerates the pending file from the reviewed documents rather than appending
-// to it, so a thread that was retriaged, replied to, resolved or deleted since the last
-// submit is reflected. Only threads already moved to an archive file are excluded, which
-// is what stops the updater being handed the same suggestion twice.
+// Submit builds suggestions from the reviewed documents and merges them onto whatever is
+// already pending, this call's version of a given id winning — so a thread retriaged,
+// replied to, resolved or deleted since it was last submitted is reflected, while a
+// suggestion from a document not passed this time (the server submits one file at a time)
+// is left standing. Only threads already moved to an archive file are excluded, which is
+// what stops the updater being handed the same suggestion twice.
 //
 // skillPath is the skill the payload edits, which is the reviewed document only when no
 // --skill was given. The skill's name is read from its own SKILL.md, never from the
@@ -69,6 +76,7 @@ func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, e
 		Mode:        deriveMode(skillMD, docs),
 		Suggestions: []Suggestion{},
 	}
+	var submitted []string
 	for _, d := range docs {
 		threads, err := comments.Threads(d.Src)
 		if err != nil {
@@ -77,27 +85,41 @@ func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, e
 		from := Build(cfg, threads, payload.SkillName, skillPath).Suggestions
 		for i := range from {
 			from[i].File = d.Path
+			submitted = append(submitted, from[i].ID)
 		}
 		payload.Suggestions = append(payload.Suggestions, from...)
 	}
-	sortSuggestions(cfg, payload.Suggestions)
 
 	file := filepath.Join(outDir, PendingName)
 	archived := ArchivedIDs(outDir)
-	payload.Suggestions = slices.DeleteFunc(payload.Suggestions, func(s Suggestion) bool {
+	submitted = slices.DeleteFunc(submitted, func(id string) bool { return archived[id] })
+
+	// Merge onto whatever is already pending, this run's version winning per id, so
+	// submitting one document never erases another's suggestions still awaiting handoff —
+	// docs here is one file at a time, everything else pending came from an earlier call.
+	previous := readPending(outDir)
+	byID := make(map[string]Suggestion, len(previous.Suggestions)+len(payload.Suggestions))
+	for _, s := range previous.Suggestions {
+		byID[s.ID] = s
+	}
+	for _, s := range payload.Suggestions {
+		byID[s.ID] = s
+	}
+	payload.Suggestions = slices.DeleteFunc(slices.Collect(maps.Values(byID)), func(s Suggestion) bool {
 		return archived[s.ID]
 	})
+	sortSuggestions(cfg, payload.Suggestions)
 
 	if len(payload.Suggestions) == 0 {
 		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
 			return Result{}, fmt.Errorf("handoff: remove %s: %w", file, err)
 		}
-		return Result{Payload: payload}, nil
+		return Result{Payload: payload, Submitted: submitted}, nil
 	}
 
 	// Reusing the archive name already recorded keeps a prompt copied earlier valid, and
 	// lets an unchanged pending file compare equal.
-	archive := readPending(outDir).Archive
+	archive := previous.Archive
 	if archive == "" {
 		archive = filepath.Join(outDir, fmt.Sprintf("handoff-%s-%s.json",
 			cmp.Or(payload.SkillName, "skill"), time.Now().UTC().Format("20060102T150405Z")))
@@ -118,7 +140,7 @@ func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, e
 			return Result{}, fmt.Errorf("handoff: write %s: %w", file, err)
 		}
 	}
-	return Result{File: file, Prompt: prompt, Changed: changed, Payload: payload}, nil
+	return Result{File: file, Prompt: prompt, Changed: changed, Payload: payload, Submitted: submitted}, nil
 }
 
 // A document counts as instructions only when every reviewed file resolves inside the

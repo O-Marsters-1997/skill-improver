@@ -309,12 +309,19 @@ func comment(t *testing.T, s *Server, passage, body string) {
 	commentOn(t, s, "", passage, body)
 }
 
+// An empty rel submits the first file in the set, the way the page sends it for a
+// single-file review.
 func submit(t *testing.T, s *Server) handoff.Result {
 	t.Helper()
+	return submitFile(t, s, "")
+}
 
-	w := post(t, s, "/api/handoff", struct{}{})
+func submitFile(t *testing.T, s *Server, rel string) handoff.Result {
+	t.Helper()
+
+	w := post(t, s, "/api/handoff", fileRequest{File: rel, Rev: getFile(t, s, rel).Rev})
 	if w.Code != http.StatusOK {
-		t.Fatalf("handoff = %d: %s", w.Code, w.Body)
+		t.Fatalf("handoff %q = %d: %s", rel, w.Code, w.Body)
 	}
 	var got handoff.Result
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -417,10 +424,13 @@ func TestHandoffSkipsArchived(t *testing.T) {
 	}
 }
 
+// Submit now strips a thread from the document the moment it is handed off, so a retriage
+// only has anything left to change if it happens before that submit — this pins that a
+// field set beforehand is the one that reaches pending.
 func TestHandoffReflectsRetriage(t *testing.T) {
 	s, _ := newTestServer(t)
 	comment(t, s, "never push", "explain the failure mode")
-	id := submit(t, s).Payload.Suggestions[0].ID
+	id := getDoc(t, s).Threads[0].ID
 
 	post(t, s, "/api/thread", threadRequest{Rev: getDoc(t, s).Rev, ID: id, Fields: map[string]string{"priority": "high"}})
 
@@ -454,6 +464,88 @@ func TestHandoffSkipsUnchangedWrite(t *testing.T) {
 }
 
 // A stray file in the output directory must not take the handoff down with it.
+// The whole point of the lifecycle fix: a handed-off thread cannot come back for a second
+// round because it is gone from the document, but a thread that was never handed off —
+// resolved, here — was never in the payload and has no business disappearing either.
+func TestHandoffStripsOnlyWhatItHandsOff(t *testing.T) {
+	s, path := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+	open := getDoc(t, s).Threads[0].ID
+
+	start, end := offsetOf(t, fixture, "Comments autosave")
+	resolved := decodeDoc(t, post(t, s, "/api/anchor", anchorRequest{
+		Rev: getDoc(t, s).Rev, Start: start, End: end, Quote: "Comments autosave", Body: "note",
+	}))
+	post(t, s, "/api/thread", threadRequest{Rev: resolved.Rev, ID: resolved.Threads[1].ID, Status: "resolved"})
+
+	got := submit(t, s)
+	if len(got.Payload.Suggestions) != 1 || got.Payload.Suggestions[0].ID != open {
+		t.Fatalf("payload = %+v; want only the open thread", got.Payload.Suggestions)
+	}
+
+	after := getDoc(t, s)
+	if len(after.Threads) != 1 || after.Threads[0].Status != "resolved" {
+		t.Errorf("threads after submit = %+v; want only the resolved one left", after.Threads)
+	}
+	if strings.Contains(string(mustRead(t, path)), open) {
+		t.Errorf("the handed-off id is still in the file:\n%s", mustRead(t, path))
+	}
+}
+
+// Submit strips only the file it was called on; the rest of the review set does not lose
+// so much as a byte, and a later submit of a different file still finds its thread there.
+func TestHandoffLeavesOtherFilesUntouched(t *testing.T) {
+	s, dir := newDirServer(t)
+	commentOn(t, s, "SKILL.md", "never push", "explain the failure mode")
+	commentOn(t, s, "references/api.md", "The reference body", "say what it returns")
+
+	before := mustRead(t, filepath.Join(dir, "references", "api.md"))
+
+	got := submitFile(t, s, "SKILL.md")
+	if len(got.Payload.Suggestions) != 1 || got.Payload.Suggestions[0].File != filepath.Join(dir, "SKILL.md") {
+		t.Fatalf("payload = %+v; want only SKILL.md's thread", got.Payload.Suggestions)
+	}
+
+	after := mustRead(t, filepath.Join(dir, "references", "api.md"))
+	if string(before) != string(after) {
+		t.Errorf("references/api.md changed:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if got := getFile(t, s, "references/api.md"); len(got.Threads) != 1 {
+		t.Errorf("references/api.md threads = %+v; want its comment untouched", got.Threads)
+	}
+}
+
+// The rev check on /api/handoff mirrors mutate's: a document changed since the browser
+// last loaded it must not be silently submitted out from under the editor.
+func TestHandoffRejectsStaleRevision(t *testing.T) {
+	s, _ := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+
+	w := post(t, s, "/api/handoff", fileRequest{Rev: "stale"})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d; want 409", w.Code)
+	}
+}
+
+func TestFileClearRemovesOnlyThatFilesComments(t *testing.T) {
+	s, dir := newDirServer(t)
+	commentOn(t, s, "SKILL.md", "never push", "explain the failure mode")
+	commentOn(t, s, "references/api.md", "The reference body", "say what it returns")
+
+	cleared := decodeDoc(t, post(t, s, "/api/file/clear", fileRequest{Rev: getDoc(t, s).Rev}))
+	if len(cleared.Threads) != 0 {
+		t.Errorf("threads after clear = %+v; want none", cleared.Threads)
+	}
+	if strings.Contains(string(mustRead(t, filepath.Join(dir, "SKILL.md"))), "mc:") {
+		t.Errorf("markers left behind in SKILL.md:\n%s", mustRead(t, filepath.Join(dir, "SKILL.md")))
+	}
+
+	other := getFile(t, s, "references/api.md")
+	if len(other.Threads) != 1 {
+		t.Errorf("references/api.md threads = %+v; want its comment untouched", other.Threads)
+	}
+}
+
 func TestHandoffToleratesCorruptArchive(t *testing.T) {
 	s, _ := newTestServer(t)
 	comment(t, s, "never push", "explain the failure mode")
@@ -840,19 +932,28 @@ func TestAnUnknownExtensionStillRendersAsMarkdown(t *testing.T) {
 	}
 }
 
-func TestHandoffSpansEveryFile(t *testing.T) {
+// Submit is per file now, so the whole review set only lands in pending.json across
+// several submits — each one has to add to what an earlier submit of a different file
+// left there, never replace it.
+func TestHandoffAccumulatesAcrossFiles(t *testing.T) {
 	s, dir := newDirServer(t)
 	commentOn(t, s, "SKILL.md", "never push", "explain the failure mode")
 	commentOn(t, s, "references/api.md", "The reference body", "say what it returns")
 	commentOn(t, s, "references/notes.md", "Something else entirely", "cut this")
 
-	got := submit(t, s)
+	submitFile(t, s, "SKILL.md")
+	if got := len(readPendingFile(t, s).Suggestions); got != 1 {
+		t.Fatalf("pending after one file = %d; want 1", got)
+	}
 
-	if len(got.Payload.Suggestions) != 3 {
-		t.Fatalf("got %d suggestions; want one per file", len(got.Payload.Suggestions))
+	submitFile(t, s, "references/api.md")
+	last := submitFile(t, s, "references/notes.md")
+
+	if len(last.Payload.Suggestions) != 3 {
+		t.Fatalf("got %d suggestions; want one per file", len(last.Payload.Suggestions))
 	}
 	var files []string
-	for _, sug := range got.Payload.Suggestions {
+	for _, sug := range last.Payload.Suggestions {
 		files = append(files, sug.File)
 	}
 	slices.Sort(files)
@@ -868,8 +969,8 @@ func TestHandoffSpansEveryFile(t *testing.T) {
 
 	// One payload, in one pending file — the skill named by the directory, not by
 	// whichever document happened to be open.
-	if got.Payload.SkillName != "example-skill" || got.Payload.SkillPath != dir {
-		t.Errorf("payload header = %+v", got.Payload)
+	if last.Payload.SkillName != "example-skill" || last.Payload.SkillPath != dir {
+		t.Errorf("payload header = %+v", last.Payload)
 	}
 	if len(readPendingFile(t, s).Suggestions) != 3 {
 		t.Error("pending.json does not hold the whole review set")

@@ -373,6 +373,34 @@ func TestRemove(t *testing.T) {
 	})
 }
 
+func TestClear(t *testing.T) {
+	t.Run("strips every marker and the threads block", func(t *testing.T) {
+		src := "one <!--mc:a:aaa-->two<!--mc:/a:aaa--> three\n\n" +
+			"<!--mc:a:bbb-->\n" + fence + "\ncode\n" + fence + "\n<!--mc:/a:bbb-->\n\n" +
+			"four\n\n" + threadsBegin + "\n" +
+			`<!--mc:t {"id":"aaa","quote":"two","status":"open","comments":[]}-->` + "\n" +
+			`<!--mc:t {"id":"bbb","quote":"code","status":"open","comments":[]}-->` + "\n" +
+			threadsEnd + "\n"
+		want := "one two three\n\n" + fence + "\ncode\n" + fence + "\n\nfour\n"
+
+		got := Clear([]byte(src))
+		if string(got) != want {
+			t.Errorf("got:\n%s\nwant:\n%s", got, want)
+		}
+		threads, err := Threads(got)
+		if err != nil || len(threads) != 0 {
+			t.Errorf("threads after Clear: %+v, err %v", threads, err)
+		}
+	})
+
+	t.Run("a file with no comments clears to itself", func(t *testing.T) {
+		src := "just prose\n"
+		if got := Clear([]byte(src)); string(got) != src {
+			t.Errorf("got %q; want %q unchanged", got, src)
+		}
+	})
+}
+
 func TestNewID(t *testing.T) {
 	seen := make(map[string]bool, 1000)
 	for range 1000 {

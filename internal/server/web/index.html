@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>skill-review</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <header>
+      <h1 id="skill-name">skill-review</h1>
+      <code id="skill-path"></code>
+      <button id="submit-all" type="button">Submit all to skill-updater</button>
+    </header>
+
+    <main>
+      <article id="doc" aria-label="Skill under review"></article>
+
+      <aside>
+        <form id="composer" hidden>
+          <h2>New comment</h2>
+          <blockquote id="composer-quote"></blockquote>
+
+          <label for="composer-body">Comment</label>
+          <textarea id="composer-body" rows="4" required
+            placeholder="What should change, and why?"></textarea>
+
+          <div class="row">
+            <span>
+              <label for="composer-priority">Priority</label>
+              <select id="composer-priority">
+                <option value="high">high</option>
+                <option value="medium" selected>medium</option>
+                <option value="low">low</option>
+              </select>
+            </span>
+            <span>
+              <label for="composer-category">Category</label>
+              <select id="composer-category">
+                <option value="instructions" selected>instructions</option>
+                <option value="tools">tools</option>
+                <option value="examples">examples</option>
+                <option value="error_handling">error_handling</option>
+                <option value="structure">structure</option>
+                <option value="references">references</option>
+              </select>
+            </span>
+          </div>
+
+          <label for="composer-impact">Expected impact <span class="hint">optional</span></label>
+          <input id="composer-impact" type="text" placeholder="What gets better if this lands" />
+
+          <div class="row">
+            <button type="submit">Save comment</button>
+            <button type="button" id="composer-cancel" class="quiet">Cancel</button>
+          </div>
+        </form>
+
+        <p id="empty" class="hint">Highlight a passage in the document to comment on it.</p>
+        <div id="threads"></div>
+      </aside>
+    </main>
+
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+    <script src="app.js"></script>
+  </body>
+</html>

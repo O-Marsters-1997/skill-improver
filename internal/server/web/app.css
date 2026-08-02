@@ -1,0 +1,312 @@
+:root {
+  --bg: #fbfaf8;
+  --panel: #ffffff;
+  --ink: #1c1b1a;
+  --muted: #6b6763;
+  --line: #e3ded8;
+  --accent: #9a5b2c;
+  --highlight: #ffeaa7;
+  --highlight-open: #fce4b6;
+  --shadow: 0 1px 2px rgb(0 0 0 / 6%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17161a;
+    --panel: #1f1e23;
+    --ink: #e9e6e1;
+    --muted: #9a948d;
+    --line: #33313a;
+    --accent: #e3a06a;
+    --highlight: #5c4a1f;
+    --highlight-open: #6b5426;
+    --shadow: none;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.6 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+}
+
+header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+header h1 {
+  font-size: 1rem;
+  margin: 0;
+  flex: none;
+  white-space: nowrap;
+}
+
+header code {
+  color: var(--muted);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#submit-all {
+  margin-left: auto;
+  flex: none;
+}
+
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24rem;
+  align-items: start;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  max-width: 90rem;
+}
+
+@media (width < 60rem) {
+  main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+#doc {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 2rem 2.5rem;
+  box-shadow: var(--shadow);
+  overflow-wrap: break-word;
+}
+
+#doc h1,
+#doc h2,
+#doc h3 {
+  line-height: 1.25;
+  margin: 1.8em 0 0.6em;
+}
+
+#doc h1:first-child {
+  margin-top: 0;
+}
+
+#doc .frontmatter pre {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 0;
+  white-space: pre-wrap;
+}
+
+#doc pre {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+}
+
+#doc :not(pre) > code {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.88em;
+}
+
+#doc table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+#doc th,
+#doc td {
+  border: 1px solid var(--line);
+  padding: 0.35rem 0.7rem;
+  text-align: left;
+}
+
+#doc blockquote {
+  margin: 1em 0;
+  padding-left: 1rem;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+#doc mark.mc,
+#doc div.mc {
+  background: var(--highlight);
+  border-radius: 3px;
+  color: inherit;
+  cursor: pointer;
+}
+
+#doc div.mc {
+  padding: 0.15rem 0.35rem;
+  margin: 0.5rem -0.35rem;
+}
+
+#doc .mc.resolved {
+  background: transparent;
+  border-bottom: 2px dotted var(--line);
+}
+
+#doc .mc.selected {
+  outline: 2px solid var(--accent);
+}
+
+aside {
+  position: sticky;
+  top: 4.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: calc(100vh - 5.5rem);
+  overflow-y: auto;
+}
+
+#composer,
+.thread {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: var(--shadow);
+}
+
+#composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-color: var(--accent);
+}
+
+/* An id selector outranks the user-agent [hidden] rule, so restate it. */
+#composer[hidden] {
+  display: none;
+}
+
+#composer h2 {
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.thread + .thread {
+  margin-top: 0.75rem;
+}
+
+.thread.resolved {
+  opacity: 0.6;
+}
+
+.thread blockquote,
+#composer blockquote {
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg);
+  border-left: 3px solid var(--highlight-open);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  max-height: 6rem;
+  overflow: hidden;
+}
+
+.comment {
+  margin-top: 0.6rem;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+}
+
+.comment .byline {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: normal;
+}
+
+label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: end;
+  margin-top: 0.25rem;
+}
+
+.row > span {
+  flex: 1;
+}
+
+textarea,
+input,
+select {
+  width: 100%;
+  font: inherit;
+  font-size: 0.88rem;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.35rem 0.5rem;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: 5px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--panel);
+  cursor: pointer;
+}
+
+button.quiet {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+#toast {
+  position: fixed;
+  inset: auto 1.25rem 1.25rem auto;
+  max-width: 32rem;
+  padding: 0.7rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 18%);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  z-index: 3;
+}
+
+#toast.error {
+  border-color: #c0392b;
+}

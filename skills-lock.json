@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "update-project-docs": {
+      "source": "O-Marsters-1997/skills",
+      "sourceType": "github",
+      "skillPath": "skills/code/update-project-docs/SKILL.md",
+      "computedHash": "2d7468749fecaf5dfb0b2d5bf7e8e3ea294f7df22fa206de5dc3f28d525e9a61"
+    }
+  }
+}

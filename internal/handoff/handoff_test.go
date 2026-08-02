@@ -65,6 +65,11 @@ func TestBuild(t *testing.T) {
 
 		got := Build([]comments.Thread{bare}, "s", "p").Suggestions[0]
 
+		// The id is what a later handoff matches against its archives to know this
+		// suggestion has already been applied.
+		if got.ID != "a" {
+			t.Errorf("id = %q; want the originating thread's", got.ID)
+		}
 		if got.Priority != defaultPriority {
 			t.Errorf("priority = %q; want %q", got.Priority, defaultPriority)
 		}

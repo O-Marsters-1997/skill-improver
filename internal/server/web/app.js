@@ -4,6 +4,8 @@ const doc = document.getElementById("doc");
 const composer = document.getElementById("composer");
 const threadList = document.getElementById("threads");
 const toast = document.getElementById("toast");
+const selectionMenu = document.getElementById("selection-menu");
+const handoffPanel = document.getElementById("handoff");
 
 const state = { rev: null, threads: [], pending: null, selected: null };
 
@@ -65,7 +67,11 @@ function edgeOffset(range, wantEnd) {
   return Number(span.dataset.o) + (wantEnd ? byteLength(span.textContent) : 0);
 }
 
+// A selection only offers to become a comment. Nothing opens until the action is chosen,
+// so the document stays readable and selectable.
 function captureSelection() {
+  hideSelectionMenu();
+
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
 
@@ -83,7 +89,30 @@ function captureSelection() {
   }
 
   state.pending = { start, end, quote };
-  openComposer(quote);
+  showSelectionMenu(range);
+}
+
+function showSelectionMenu(range) {
+  const box = range.getBoundingClientRect();
+  selectionMenu.hidden = false;
+
+  const gap = 8;
+  const width = selectionMenu.offsetWidth;
+  const height = selectionMenu.offsetHeight;
+  const left = clamp(box.left + box.width / 2 - width / 2, gap, window.innerWidth - width - gap);
+  const above = box.top - height - gap;
+  const top = above < gap ? box.bottom + gap : above;
+
+  selectionMenu.style.left = `${left + window.scrollX}px`;
+  selectionMenu.style.top = `${top + window.scrollY}px`;
+}
+
+function hideSelectionMenu() {
+  selectionMenu.hidden = true;
+}
+
+function clamp(value, low, high) {
+  return Math.min(Math.max(value, low), Math.max(low, high));
 }
 
 function openComposer(quote) {
@@ -96,6 +125,7 @@ function closeComposer() {
   composer.reset();
   composer.hidden = true;
   state.pending = null;
+  hideSelectionMenu();
 }
 
 function element(tag, props = {}, ...children) {
@@ -177,6 +207,7 @@ function draw(payload) {
   threadList.replaceChildren(...state.threads.map(threadCard));
   document.getElementById("empty").hidden = state.threads.length > 0;
   highlight(state.selected);
+  hideSelectionMenu();
 }
 
 function highlight(id) {
@@ -198,6 +229,17 @@ doc.addEventListener("keyup", (event) => {
   if (event.shiftKey) captureSelection();
 });
 
+// The menu sits outside #doc, so its own mousedown must not count as clicking away.
+document.addEventListener("mousedown", (event) => {
+  if (!selectionMenu.contains(event.target)) hideSelectionMenu();
+});
+
+document.getElementById("selection-comment").addEventListener("click", () => {
+  if (!state.pending) return;
+  hideSelectionMenu();
+  openComposer(state.pending.quote);
+});
+
 doc.addEventListener("click", (event) => {
   const mark = event.target.closest(".mc");
   if (!mark) return;
@@ -211,16 +253,7 @@ composer.addEventListener("submit", (event) => {
   if (!body || !state.pending) return;
 
   run(async () => {
-    draw(
-      await api("/api/anchor", {
-        rev: state.rev,
-        ...state.pending,
-        body,
-        priority: document.getElementById("composer-priority").value,
-        category: document.getElementById("composer-category").value,
-        impact: document.getElementById("composer-impact").value.trim(),
-      }),
-    );
+    draw(await api("/api/anchor", { rev: state.rev, ...state.pending, body }));
     closeComposer();
     window.getSelection()?.removeAllRanges();
     say("Comment saved to the file.");
@@ -230,6 +263,7 @@ composer.addEventListener("submit", (event) => {
 document.getElementById("composer-cancel").addEventListener("click", closeComposer);
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideSelectionMenu();
   if (event.key === "Escape" && !composer.hidden) closeComposer();
   if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !composer.hidden) {
     composer.requestSubmit();
@@ -271,13 +305,46 @@ threadList.addEventListener("change", (event) => {
   });
 });
 
+// The prompt is the one thing worth keeping on screen, so this panel waits to be
+// dismissed rather than timing out like every other message.
 document.getElementById("submit-all").addEventListener("click", () => {
   run(async () => {
     const result = await api("/api/handoff", {});
     const count = result.payload.improvement_suggestions.length;
-    await navigator.clipboard?.writeText(result.prompt).catch(() => {});
-    say(`${count} suggestion${count === 1 ? "" : "s"} written to ${result.file}\n\nPaste this to Claude:\n${result.prompt}`);
+    const prompt = document.getElementById("handoff-prompt");
+
+    if (count === 0) {
+      document.getElementById("handoff-summary").textContent =
+        "Nothing to hand off — every open thread has already been archived.";
+      prompt.hidden = true;
+      document.getElementById("handoff-copy").hidden = true;
+      handoffPanel.hidden = false;
+      return;
+    }
+    document.getElementById("handoff-copy").hidden = false;
+
+    const noun = `${count} suggestion${count === 1 ? "" : "s"}`;
+    document.getElementById("handoff-summary").textContent = result.changed
+      ? `${noun} pending in ${result.file}`
+      : `Nothing new — ${noun} still pending in ${result.file}`;
+    prompt.textContent = result.prompt;
+    prompt.hidden = false;
+    handoffPanel.hidden = false;
+    copyPrompt();
   });
 });
+
+async function copyPrompt() {
+  const prompt = document.getElementById("handoff-prompt").textContent;
+  try {
+    await navigator.clipboard.writeText(prompt);
+    say("Prompt copied to the clipboard.");
+  } catch {
+    say("Could not reach the clipboard — copy the prompt from the panel or the terminal.", true);
+  }
+}
+
+document.getElementById("handoff-copy").addEventListener("click", () => copyPrompt());
+document.getElementById("handoff-close").addEventListener("click", () => (handoffPanel.hidden = true));
 
 run(load);

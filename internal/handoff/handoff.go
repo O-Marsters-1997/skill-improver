@@ -29,7 +29,10 @@ var (
 	categories = []string{"instructions", "tools", "examples", "error_handling", "structure", "references"}
 )
 
+// ID is the originating thread's, and is what tells a later handoff that this
+// suggestion has already been applied.
 type Suggestion struct {
+	ID             string `json:"id"`
 	Priority       string `json:"priority"`
 	Category       string `json:"category"`
 	Suggestion     string `json:"suggestion"`
@@ -59,6 +62,7 @@ func Build(threads []comments.Thread, skillName, skillPath string) Payload {
 			continue
 		}
 		payload.Suggestions = append(payload.Suggestions, Suggestion{
+			ID:             t.ID,
 			Priority:       oneOf(t.Priority, priorities, defaultPriority),
 			Category:       oneOf(t.Category, categories, defaultCategory),
 			Suggestion:     describe(bodies, t.Quote),

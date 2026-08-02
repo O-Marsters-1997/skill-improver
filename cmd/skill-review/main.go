@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/O-Marsters-1997/improve-skills/internal/server"
@@ -21,7 +20,7 @@ func main() {
 	log.SetFlags(0)
 
 	addr := flag.String("addr", ":8420", "address to serve on")
-	out := flag.String("out", defaultOutDir(), "directory for handoff payloads")
+	out := flag.String("out", ".skill-review", "directory for handoff payloads")
 	author := flag.String("author", defaultAuthor(), "name recorded against comments")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: skill-review [flags] <path-to-SKILL.md>\n\n")
@@ -46,14 +45,6 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	log.Fatal(srv.ListenAndServe())
-}
-
-func defaultOutDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "."
-	}
-	return filepath.Join(home, ".claude", "skill-review")
 }
 
 func defaultAuthor() string {

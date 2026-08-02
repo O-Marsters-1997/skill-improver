@@ -293,7 +293,23 @@ button.quiet {
   border-color: var(--line);
 }
 
-#toast {
+#selection-menu {
+  position: absolute;
+  padding: 0.25rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 18%);
+  z-index: 4;
+}
+
+/* An id selector outranks the user-agent [hidden] rule, so restate it. */
+#selection-menu[hidden] {
+  display: none;
+}
+
+#toast,
+#handoff {
   position: fixed;
   inset: auto 1.25rem 1.25rem auto;
   max-width: 32rem;
@@ -309,4 +325,30 @@ button.quiet {
 
 #toast.error {
   border-color: #c0392b;
+}
+
+#handoff {
+  inset: auto 1.25rem 5rem auto;
+  max-width: 36rem;
+  border-color: var(--accent);
+}
+
+#handoff[hidden] {
+  display: none;
+}
+
+#handoff p {
+  margin: 0;
+}
+
+#handoff pre {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
 }

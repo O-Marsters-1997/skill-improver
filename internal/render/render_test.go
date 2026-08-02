@@ -132,7 +132,9 @@ func TestHTML(t *testing.T) {
 }
 
 func TestHTMLGolden(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "testdata", "example-SKILL.md"))
+	// A local copy, not the root fixture: that one is the demo document `just run`
+	// opens, so reviewing it would rewrite the input this golden is pinned to.
+	src, err := os.ReadFile(filepath.Join("testdata", "example-SKILL.md"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}

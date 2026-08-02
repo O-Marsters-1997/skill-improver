@@ -3,3 +3,9 @@ bin/
 ideas
 plans
 .agents
+dist/
+
+# Built by `just web` (Vite, see web/); not-built.html is the one file that stays committed,
+# both to satisfy `//go:embed web` on a fresh clone and to serve as the fallback page.
+internal/server/web/*
+!internal/server/web/not-built.html

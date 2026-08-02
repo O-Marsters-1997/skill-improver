@@ -75,7 +75,7 @@ the single documented exception.
 
 ## Consequences
 
-The four copies of the taxonomy become one. `app.js` builds its controls from what
+The four copies of the taxonomy become one. The web frontend builds its controls from what
 `/api/doc` serves, and `/skill-comments` shells out to `skill-review handoff` instead of
 restating the rules in English.
 

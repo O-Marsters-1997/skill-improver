@@ -1,0 +1,156 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@plugin "@tailwindcss/typography";
+
+@theme inline {
+    --color-highlight: var(--highlight);
+    --color-highlight-open: var(--highlight-open);
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* Ported from the previous app.css palette — a warm off-white/brown theme rather than the
+   shadcn preset default. --highlight(-open) are genuine additions: nothing in the base
+   token set covers an anchored-comment highlight. */
+:root {
+    --background: oklch(0.985 0.003 84.6);
+    --foreground: oklch(0.223 0.002 67.7);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.223 0.002 67.7);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.223 0.002 67.7);
+    --primary: oklch(0.534 0.103 54.9);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0.903 0.01 72.7);
+    --secondary-foreground: oklch(0.223 0.002 67.7);
+    --muted: oklch(0.95 0.006 75);
+    --muted-foreground: oklch(0.516 0.008 67.6);
+    --accent: oklch(0.95 0.006 75);
+    --accent-foreground: oklch(0.223 0.002 67.7);
+    --destructive: oklch(0.543 0.174 29.7);
+    --destructive-foreground: oklch(1 0 0);
+    --border: oklch(0.903 0.01 72.7);
+    --input: oklch(0.903 0.01 72.7);
+    --ring: oklch(0.534 0.103 54.9);
+    --highlight: oklch(0.939 0.088 92.7);
+    --highlight-open: oklch(0.927 0.065 83.6);
+    --radius: 0.5rem;
+    --sidebar: oklch(0.985 0.003 84.6);
+    --sidebar-foreground: oklch(0.223 0.002 67.7);
+    --sidebar-primary: oklch(0.534 0.103 54.9);
+    --sidebar-primary-foreground: oklch(1 0 0);
+    --sidebar-accent: oklch(0.95 0.006 75);
+    --sidebar-accent-foreground: oklch(0.223 0.002 67.7);
+    --sidebar-border: oklch(0.903 0.01 72.7);
+    --sidebar-ring: oklch(0.534 0.103 54.9);
+}
+
+/* No theme toggle exists — dark mode follows the OS, exactly as the old app.css did.
+   That means the built-in media-query `dark:` variant, not shadcn's default class-based one. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.203 0.008 297.1);
+    --foreground: oklch(0.926 0.007 80.7);
+    --card: oklch(0.238 0.01 294.8);
+    --card-foreground: oklch(0.926 0.007 80.7);
+    --popover: oklch(0.238 0.01 294.8);
+    --popover-foreground: oklch(0.926 0.007 80.7);
+    --primary: oklch(0.759 0.106 59.1);
+    --primary-foreground: oklch(0.238 0.01 294.8);
+    --secondary: oklch(0.319 0.016 295.7);
+    --secondary-foreground: oklch(0.926 0.007 80.7);
+    --muted: oklch(0.319 0.016 295.7);
+    --muted-foreground: oklch(0.67 0.012 71.8);
+    --accent: oklch(0.319 0.016 295.7);
+    --accent-foreground: oklch(0.926 0.007 80.7);
+    --destructive: oklch(0.543 0.174 29.7);
+    --destructive-foreground: oklch(0.985 0 0);
+    --border: oklch(0.319 0.016 295.7);
+    --input: oklch(0.319 0.016 295.7);
+    --ring: oklch(0.759 0.106 59.1);
+    --highlight: oklch(0.418 0.065 86.6);
+    --highlight-open: oklch(0.459 0.07 82.7);
+    --sidebar: oklch(0.238 0.01 294.8);
+    --sidebar-foreground: oklch(0.926 0.007 80.7);
+    --sidebar-primary: oklch(0.759 0.106 59.1);
+    --sidebar-primary-foreground: oklch(0.238 0.01 294.8);
+    --sidebar-accent: oklch(0.319 0.016 295.7);
+    --sidebar-accent-foreground: oklch(0.926 0.007 80.7);
+    --sidebar-border: oklch(0.319 0.016 295.7);
+    --sidebar-ring: oklch(0.759 0.106 59.1);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    }
+}
+
+/* Everything below is server-rendered markdown (internal/render), injected via
+   dangerouslySetInnerHTML — Tailwind's scanner never sees these classes, so they need
+   hand-written rules. `prose` covers the elements goldmark can emit (h1-h6, lists, tables,
+   blockquote, code, images, hr, task-list checkboxes); this layer covers what `prose`
+   cannot know about: the mc anchor markers and the frontmatter block. */
+@layer components {
+  #doc {
+    @apply prose prose-neutral dark:prose-invert max-w-none;
+  }
+
+  #doc .frontmatter pre {
+    @apply text-muted-foreground text-sm mt-0 whitespace-pre-wrap;
+  }
+
+  #doc mark.mc,
+  #doc div.mc {
+    @apply bg-highlight rounded-sm text-inherit cursor-pointer;
+  }
+
+  #doc div.mc {
+    @apply px-1.5 py-1 -mx-1.5 my-2;
+  }
+
+  #doc .mc.resolved {
+    @apply bg-transparent border-b-2 border-dotted border-border;
+  }
+
+  #doc .mc.selected {
+    @apply outline-2 outline-primary;
+  }
+}

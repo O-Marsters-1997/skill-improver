@@ -26,15 +26,23 @@ why the target and the skill are two arguments.
 ## Install
 
 ```
-git clone https://github.com/O-Marsters-1997/improve-skills
-cd improve-skills
+brew install O-Marsters-1997/tap/skill-review
+```
+
+Or from source:
+
+```
+git clone https://github.com/O-Marsters-1997/skill-improver
+cd skill-improver
 just build          # -> bin/skill-review
 just install        # or, onto your $GOPATH/bin
 ```
 
-Requires Go 1.26.5+ (per `go.mod`) and [`just`](https://just.systems) (`brew install just`).
-Once pushed to GitHub, `go install
-github.com/O-Marsters-1997/improve-skills/cmd/skill-review@latest` works without cloning.
+Requires Go 1.26.5+ (per `go.mod`), [`just`](https://just.systems) (`brew install just`), and
+[`bun`](https://bun.sh) (`brew install bun`) — the frontend at `web/` is built by `just build`
+before Go embeds it. `go install .../skill-review@latest` is **not** supported: the built
+frontend isn't committed to the module (see `internal/server/web/`), so that path would install
+a binary that only ever shows a "frontend not built" page. Build from source or use the tap.
 
 ## Quickstart
 
@@ -276,15 +284,16 @@ the browser is not an option, without consuming any comment.
 
 | Recipe | What it does |
 | ------ | ------------ |
-| `just run [args]` | Serve a file or skill directory (defaults to the fixture) |
-| `just build` | Build to `bin/skill-review` |
-| `just install` | `go install` the command |
+| `just web` | Build the frontend (`web/`) into `internal/server/web` |
+| `just run [args]` | Serve a file or skill directory (defaults to the fixture) — builds the frontend first |
+| `just build` | Build to `bin/skill-review` — builds the frontend first |
+| `just install` | `go install` the command — builds the frontend first |
 | `just test [args]` | Run all tests |
 | `just fuzz [time]` | Run `FuzzOffsets` (default 30s) |
 | `just fmt` | `gofmt -w` over `cmd` and `internal` |
 | `just vet` | `go vet ./...` |
 | `just check` | vet + test + fail on unformatted files |
-| `just clean` | Remove `bin/` |
+| `just clean` | Remove `bin/` and the built frontend |
 
 `internal/comments`, `internal/render` and `handoff.Build` are pure and table-tested;
 `internal/render` additionally has `FuzzOffsets`, which asserts the property the whole tool

@@ -126,7 +126,19 @@ func assetHandler(fsys fs.FS) http.Handler {
 			_, _ = w.Write(page)
 		})
 	}
-	return http.FileServerFS(fsys)
+	files := http.FileServerFS(fsys)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every reviewable file is also a UI route (/references/theming.md), so a path
+		// that is not a built asset belongs to the SPA, not to a 404. fs.Stat rejects
+		// "..", which sends traversal attempts to index.html rather than up the tree.
+		if name := strings.TrimPrefix(r.URL.Path, "/"); name != "" {
+			if _, err := fs.Stat(fsys, name); err != nil {
+				r = r.Clone(r.Context())
+				r.URL.Path = "/"
+			}
+		}
+		files.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }

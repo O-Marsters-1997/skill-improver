@@ -147,6 +147,22 @@ none of them to pending.json first.
 | `internal/skill` | the `name:` in a SKILL.md's frontmatter, and directory → SKILL.md |
 | `internal/handoff` | threads → payload (`Build`), and payload → disk (`Submit`) |
 | `internal/server` | discovery, the routes, the write lock, the embedded page |
+| `web/` | the page itself: a Vite/React SPA built into `internal/server/web` and embedded |
+
+`web/` is one screen — `features/review/` — over three panes: the file explorer, the document,
+and the thread list. It holds no state the server does not: `useDoc` refetches on every
+mutation and redraws from the response, so there is nothing to cache or invalidate. The two
+things it does own are the filter (client-only, and deliberately never sent — the count Submit
+reports has to stay the server's) and which folders are expanded.
+
+**The URL is the file.** `/references/theming.md` reviews that path; `/` means the server's
+first. Routing is `history.pushState` and one hook, not a router, and deep links work because
+the Go asset handler serves `index.html` for anything that is not a built asset — see
+[ADR-0005](adr/0005-spa-routing.md). The explorer is a WAI-ARIA treeview: one tab stop, arrow
+keys inside, so Tab reaches the document without walking every file.
+
+`internal/server/web/` is **build output**, not source. `just web` writes it; only
+`not-built.html` is committed, which is why the Vite config sets `emptyOutDir: false`.
 
 `comments`, `render`, `config` and `handoff.Build` are pure and table-tested; that is the
 reason this is Go rather than another TypeScript extension. `handoff.Submit` is the one

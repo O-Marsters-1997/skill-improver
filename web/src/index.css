@@ -68,6 +68,9 @@
     --highlight: oklch(0.939 0.088 92.7);
     --highlight-open: oklch(0.927 0.065 83.6);
     --radius: 0.5rem;
+    /* Three panes sit under the header and size themselves against it, so its height is a
+       token rather than a number re-derived in each of them. */
+    --header-h: 3.25rem;
     --sidebar: oklch(0.985 0.003 84.6);
     --sidebar-foreground: oklch(0.223 0.002 67.7);
     --sidebar-primary: oklch(0.534 0.103 54.9);
@@ -103,7 +106,10 @@
     --ring: oklch(0.759 0.106 59.1);
     --highlight: oklch(0.418 0.065 86.6);
     --highlight-open: oklch(0.459 0.07 82.7);
-    --sidebar: oklch(0.238 0.01 294.8);
+    /* The rail sits behind the document surface in both themes: --card reads as the page
+       being edited, --sidebar as the chrome around it. In light that is white on off-white;
+       dark needs the same relationship, so the rail drops to the background value. */
+    --sidebar: oklch(0.203 0.008 297.1);
     --sidebar-foreground: oklch(0.926 0.007 80.7);
     --sidebar-primary: oklch(0.759 0.106 59.1);
     --sidebar-primary-foreground: oklch(0.238 0.01 294.8);
@@ -135,6 +141,12 @@
 
   #doc .frontmatter pre {
     @apply text-muted-foreground text-sm mt-0 whitespace-pre-wrap;
+  }
+
+  /* Hidden, not stripped — the offsets every comment anchor is stored against are counted
+     over the whole file, frontmatter included. */
+  .hide-frontmatter #doc .frontmatter {
+    @apply hidden;
   }
 
   #doc mark.mc,

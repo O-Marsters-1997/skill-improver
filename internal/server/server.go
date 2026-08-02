@@ -74,6 +74,7 @@ func New(cfg *config.Config, path, skillPath, outDir, author string) (*Server, e
 		return nil, fmt.Errorf("server: embedded assets: %w", err)
 	}
 	s.mux.Handle("GET /", http.FileServerFS(assets))
+	s.mux.HandleFunc("GET /api/files", s.handleFiles)
 	s.mux.HandleFunc("GET /api/doc", s.handleDoc)
 	s.mux.HandleFunc("POST /api/anchor", s.handleAnchor)
 	s.mux.HandleFunc("POST /api/thread", s.handleThread)
@@ -98,6 +99,39 @@ type doc struct {
 	Threads []comments.Thread `json:"threads"`
 	Fields  []config.Field    `json:"fields"`
 	Updater string            `json:"updater"`
+}
+
+// One row of the explorer. Threads counts what Build would turn into suggestions rather
+// than every thread in the file, so a file whose threads are all resolved is not named as
+// a contributor the Submit panel has to warn about.
+//
+// ponytail: archived ids are not subtracted, so the count can overstate by threads already
+// handed off; wire archivedIDs in if the over-report ever misleads.
+type fileEntry struct {
+	Rel     string `json:"rel"`
+	Ext     string `json:"ext"`
+	Threads int    `json:"threads"`
+}
+
+func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
+	s.writeFile.Lock()
+	defer s.writeFile.Unlock()
+
+	src, _, err := s.load()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	threads, err := comments.Threads(src)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, []fileEntry{{
+		Rel:     filepath.Base(s.path),
+		Ext:     strings.ToLower(filepath.Ext(s.path)),
+		Threads: len(handoff.Build(s.cfg, threads, "", "").Suggestions),
+	}})
 }
 
 func (s *Server) handleDoc(w http.ResponseWriter, r *http.Request) {

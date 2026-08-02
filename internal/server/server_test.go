@@ -527,6 +527,78 @@ func TestAnchorGivesUpOnAnIDSourceThatOnlyCollides(t *testing.T) {
 	}
 }
 
+func getFiles(t *testing.T, s *Server) []fileEntry {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/files", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/files = %d: %s", w.Code, w.Body)
+	}
+	var got []fileEntry
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode files: %v", err)
+	}
+	return got
+}
+
+// The explorer filters on ext and reports contributors from threads, so both have to be
+// served rather than guessed from the name in the browser.
+func TestFilesServesTheExplorerRow(t *testing.T) {
+	s, path := newTestServer(t)
+
+	got := getFiles(t, s)
+	if len(got) != 1 {
+		t.Fatalf("got %d rows; want 1", len(got))
+	}
+	if got[0].Rel != filepath.Base(path) || got[0].Ext != ".md" {
+		t.Errorf("row = %+v", got[0])
+	}
+	if got[0].Threads != 0 {
+		t.Errorf("threads = %d; want 0", got[0].Threads)
+	}
+
+	comment(t, s, "never push", "explain the failure mode")
+	if got := getFiles(t, s); got[0].Threads != 1 {
+		t.Errorf("threads = %d after commenting; want 1", got[0].Threads)
+	}
+
+	// Resolved threads contribute nothing to the payload, so naming their file as a
+	// contributor would be a false alarm.
+	post(t, s, "/api/thread", threadRequest{
+		Rev: getDoc(t, s).Rev, ID: getDoc(t, s).Threads[0].ID, Status: "resolved",
+	})
+	if got := getFiles(t, s); got[0].Threads != 0 {
+		t.Errorf("threads = %d with everything resolved; want 0", got[0].Threads)
+	}
+}
+
+// The file-type filter keys off ext, so this pins that ext reaches nothing on the way to
+// the payload: a thread in a file the default `markdown` filter hides still ships. The
+// filter itself is browser state and no route accepts it, which is the other half of the
+// guarantee and the half no Go test can hold — keep it that way.
+func TestExtCannotChangeWhatShips(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "report.html")
+	const page = "<h1>Report</h1>\n<p>Comments autosave to disk; never push to a terminal.</p>\n"
+	if err := os.WriteFile(path, []byte(page), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(config.Default(), path, "", filepath.Join(dir, "out"), "olly")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := getFiles(t, s); got[0].Ext != ".html" {
+		t.Fatalf("ext = %q; the default filter hides rows by this", got[0].Ext)
+	}
+	comment(t, s, "never push", "explain the failure mode")
+
+	if got := submit(t, s); len(got.Payload.Suggestions) != 1 {
+		t.Fatalf("got %d suggestions from a hidden file; want the thread to ship anyway", len(got.Payload.Suggestions))
+	}
+}
+
 func TestServesThePage(t *testing.T) {
 	s, _ := newTestServer(t)
 

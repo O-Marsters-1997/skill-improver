@@ -163,9 +163,9 @@ func Load(path string) (*Config, error) {
 // rules rather than accepting anything the user types.
 var fieldName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
-// Fields are written flat onto the thread, so a field named after one of the thread's own
-// keys would overwrite it.
-var reserved = []string{"id", "quote", "status", "comments", "impact"}
+// Fields are written flat onto the thread and flat onto the suggestion, so a field named
+// after one of their own keys would overwrite it.
+var reserved = []string{"id", "quote", "status", "comments", "impact", "file", "mode"}
 
 func (c *Config) validate(path string) error {
 	seen := map[string]bool{}
@@ -181,7 +181,7 @@ func (c *Config) validate(path string) error {
 		case !fieldName.MatchString(f.Name):
 			return fmt.Errorf("%s: name must be lower-case letters, digits and underscores, starting with a letter", where)
 		case slices.Contains(reserved, f.Name):
-			return fmt.Errorf("%s: %s is reserved by the thread itself; pick another name", where, f.Name)
+			return fmt.Errorf("%s: %s is reserved by the thread or the payload itself; pick another name", where, f.Name)
 		case seen[f.Name]:
 			return fmt.Errorf("%s: declared twice", where)
 		case len(f.Values) == 0:
@@ -216,9 +216,9 @@ func UpdaterName(path string) (string, error) {
 		return "", fmt.Errorf("%s is not an absolute path", path)
 	}
 
-	file := path
-	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		file = filepath.Join(path, "SKILL.md")
+	file, err := skill.Resolve(path)
+	if err != nil {
+		return "", err
 	}
 
 	src, err := os.ReadFile(file)

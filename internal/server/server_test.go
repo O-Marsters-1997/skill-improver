@@ -35,7 +35,7 @@ func newTestServer(t *testing.T) (*Server, string) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	s, err := New(config.Default(), path, filepath.Join(dir, "out"), "olly")
+	s, err := New(config.Default(), path, "", filepath.Join(dir, "out"), "olly")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestDocServesTheSchema(t *testing.T) {
 		Fields:  []config.Field{{Name: "severity", Label: "How bad", Values: []string{"blocker", "nit"}, Default: "nit"}},
 		Updater: config.Updater{Name: "my-updater"},
 	}
-	s, err := New(cfg, path, filepath.Join(dir, "out"), "olly")
+	s, err := New(cfg, path, "", filepath.Join(dir, "out"), "olly")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,5 +538,39 @@ func TestServesThePage(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `id="doc"`) {
 		t.Errorf("index.html not served:\n%s", w.Body)
+	}
+}
+
+// The split that is the whole feature: the file served for review and the skill the
+// payload edits are two paths.
+func TestHandoffNamesTheSkillNotTheTarget(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills", "ideate")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(dir, "report.md")
+	if err := os.WriteFile(report, []byte("# Report\n\nA claim that is wrong.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := New(config.Default(), report, skillDir, filepath.Join(dir, "out"), "olly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	comment(t, s, "A claim that is wrong", "say why")
+
+	got := submit(t, s).Payload
+	if got.Mode != handoff.ModeOutput {
+		t.Errorf("mode = %q; want %q", got.Mode, handoff.ModeOutput)
+	}
+	if got.SkillPath != skillDir || got.SkillName != "example-skill" {
+		t.Errorf("payload names the target, not the skill: %+v", got)
+	}
+	if len(got.Suggestions) != 1 || got.Suggestions[0].File != report {
+		t.Errorf("suggestion does not name the reviewed report: %+v", got.Suggestions)
 	}
 }

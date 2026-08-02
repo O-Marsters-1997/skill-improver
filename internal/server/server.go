@@ -7,6 +7,7 @@
 package server
 
 import (
+	"cmp"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -32,8 +33,11 @@ import (
 //go:embed web
 var webFS embed.FS
 
+// path is the document under review; skill is what the payload edits, which is the same
+// path unless --skill said otherwise.
 type Server struct {
 	path      string
+	skill     string
 	outDir    string
 	author    string
 	cfg       *config.Config
@@ -42,13 +46,18 @@ type Server struct {
 	writeFile sync.Mutex // ponytail: one lock for the whole file; this serves one reviewer
 }
 
-func New(cfg *config.Config, path, outDir, author string) (*Server, error) {
+func New(cfg *config.Config, path, skillPath, outDir, author string) (*Server, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("server: resolve %s: %w", path, err)
 	}
 	if _, err := os.ReadFile(absolute); err != nil {
 		return nil, fmt.Errorf("server: %w", err)
+	}
+
+	absoluteSkill, err := filepath.Abs(cmp.Or(skillPath, path))
+	if err != nil {
+		return nil, fmt.Errorf("server: resolve %s: %w", skillPath, err)
 	}
 
 	// -out is relative by default, so it lands in the directory the binary was run
@@ -58,7 +67,7 @@ func New(cfg *config.Config, path, outDir, author string) (*Server, error) {
 		return nil, fmt.Errorf("server: resolve %s: %w", outDir, err)
 	}
 
-	s := &Server{path: absolute, outDir: out, author: author, cfg: cfg, mux: http.NewServeMux(), newID: comments.NewID}
+	s := &Server{path: absolute, skill: absoluteSkill, outDir: out, author: author, cfg: cfg, mux: http.NewServeMux(), newID: comments.NewID}
 
 	assets, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -76,6 +85,8 @@ func New(cfg *config.Config, path, outDir, author string) (*Server, error) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
 func (s *Server) Path() string { return s.path }
+
+func (s *Server) Skill() string { return s.skill }
 
 // Fields and Updater are served rather than baked into the page, so the browser cannot
 // drift from the schema the payload is built against.
@@ -223,7 +234,7 @@ func (s *Server) handleHandoff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := handoff.Submit(s.cfg, s.outDir, s.path, src)
+	result, err := handoff.Submit(s.cfg, s.outDir, s.skill, []handoff.Doc{{Path: s.path, Src: src}})
 	if err != nil {
 		writeError(w, err)
 		return

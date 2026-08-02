@@ -109,7 +109,17 @@ func TestLoadRejects(t *testing.T) {
 		{
 			name: "a name the thread already uses",
 			body: "[[field]]\nname = \"status\"\nvalues = [\"a\"]\ndefault = \"a\"\n",
-			want: "status is reserved by the thread itself",
+			want: "status is reserved",
+		},
+		{
+			name: "a name the suggestion already uses",
+			body: "[[field]]\nname = \"file\"\nvalues = [\"a\"]\ndefault = \"a\"\n",
+			want: "file is reserved",
+		},
+		{
+			name: "a name the payload already uses",
+			body: "[[field]]\nname = \"mode\"\nvalues = [\"a\"]\ndefault = \"a\"\n",
+			want: "mode is reserved",
 		},
 		{
 			name: "duplicate name",

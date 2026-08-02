@@ -146,6 +146,45 @@ func TestBuild(t *testing.T) {
 		}
 	})
 
+	// file and mode are the updater's keys, not triage. Missing the delete in
+	// UnmarshalJSON turns file into a field the sidebar would then offer.
+	t.Run("file and mode survive a round trip without becoming fields", func(t *testing.T) {
+		sent := Payload{
+			SkillName: "ideate",
+			SkillPath: "/skills/ideate",
+			Mode:      ModeOutput,
+			Suggestions: []Suggestion{{
+				ID:             "a",
+				File:           "/reports/2026-08-02-ideate.md",
+				Fields:         map[string]string{"priority": "high"},
+				Suggestion:     "be specific",
+				ExpectedImpact: "fewer misfires",
+			}},
+		}
+
+		body, err := json.Marshal(sent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{`"mode":"output"`, `"file":"/reports/2026-08-02-ideate.md"`} {
+			if !strings.Contains(string(body), want) {
+				t.Errorf("payload is missing %s:\n%s", want, body)
+			}
+		}
+
+		var round Payload
+		if err := json.Unmarshal(body, &round); err != nil {
+			t.Fatal(err)
+		}
+		got := round.Suggestions[0]
+		if round.Mode != ModeOutput || got.File != sent.Suggestions[0].File {
+			t.Errorf("round trip lost mode or file: %q, %+v", round.Mode, got)
+		}
+		if len(got.Fields) != 1 || got.Fields["priority"] != "high" {
+			t.Errorf("fields = %+v; want only the configured ones", got.Fields)
+		}
+	})
+
 	t.Run("keeps the reviewer's own impact when given", func(t *testing.T) {
 		withImpact := thread("a", "high", "add an example")
 		withImpact.Impact = "fewer misfires on ambiguous input"

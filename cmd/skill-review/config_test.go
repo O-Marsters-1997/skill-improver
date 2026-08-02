@@ -45,10 +45,10 @@ func TestConfigInit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the file it just wrote does not load: %v", err)
 		}
-		if len(cfg.Fields) != 2 || cfg.Fields[0].Name != "priority" {
+		if len(cfg.Fields) != 3 || cfg.Fields[0].Name != "priority" {
 			t.Errorf("fields = %+v; want the defaults", cfg.Fields)
 		}
-		for _, want := range []string{"wrote", config.LocalName, "updater   none", "priority", "category"} {
+		for _, want := range []string{"wrote", config.LocalName, "updater   none", "priority", "category", "cause"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("output does not mention %q:\n%s", want, out)
 			}

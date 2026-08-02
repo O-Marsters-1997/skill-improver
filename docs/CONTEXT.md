@@ -69,8 +69,10 @@ the config. Each one is a control on every thread card and a key on every sugges
 config is the single description of both. Fields are stored **flat** on the thread rather
 than nested under a key of their own, which is what lets a file written under a different
 schema still parse. A value whose field has since been removed is kept in the file and
-simply not offered. The defaults are `priority` (high/medium/low) and `category`
-(instructions, tools, examples, error_handling, structure, references).
+simply not offered. The defaults are `priority` (high/medium/low), `category`
+(instructions, tools, examples, error_handling, structure, references) and `cause`
+(instructions/execution) — the last of which separates "the instruction is wrong" from "the
+model slipped this once", so a fluke is not baked into a permanent edit.
 
 **Suggestion** and **payload** — the updater's vocabulary, not ours. A thread becomes one
 suggestion carrying the thread's `id`, one key per field, the suggestion text and an

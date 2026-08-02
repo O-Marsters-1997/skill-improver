@@ -131,7 +131,7 @@ func TestBuild(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{`"priority":"high"`, `"category":"instructions"`, `"id":"a"`, `"improvement_suggestions"`} {
+		for _, want := range []string{`"priority":"high"`, `"category":"instructions"`, `"cause":"instructions"`, `"id":"a"`, `"improvement_suggestions"`} {
 			if !strings.Contains(string(body), want) {
 				t.Errorf("payload is missing %s:\n%s", want, body)
 			}

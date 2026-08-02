@@ -248,6 +248,28 @@ func NewID() string {
 	return strconv.FormatUint(rand.Uint64N(36*36*36*36*36*36), 36)
 }
 
+// IDs is every id the document already spends, counting anchors and thread lines
+// separately because a thread can outlive its markers and vice versa. Unlike Threads it
+// skips a line that will not decode rather than stopping there: the set is only safe if it
+// errs towards holding too much.
+func IDs(src []byte) map[string]bool {
+	ids := map[string]bool{}
+	for _, m := range markerPattern.FindAllSubmatch(src, -1) {
+		ids[string(m[2])] = true
+	}
+	block, _, _, ok := threadsBlock(src)
+	if !ok {
+		return ids
+	}
+	for _, m := range threadPattern.FindAllSubmatch(block, -1) {
+		var t Thread
+		if json.Unmarshal(m[1], &t) == nil {
+			ids[t.ID] = true
+		}
+	}
+	return ids
+}
+
 func openMarker(id string) string  { return "<!--mc:a:" + id + "-->" }
 func closeMarker(id string) string { return "<!--mc:/a:" + id + "-->" }
 

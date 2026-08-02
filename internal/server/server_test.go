@@ -27,21 +27,26 @@ description: a fixture
 Comments autosave to disk; never push to a terminal.
 `
 
-// The fixture is copied so a test can mutate it freely.
-func newTestServer(t *testing.T) (*Server, string) {
+// The fixture is copied into a temp directory so a test can mutate it freely.
+func newFileServer(t *testing.T, cfg *config.Config, name, body string) (*Server, string) {
 	t.Helper()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "SKILL.md")
-	if err := os.WriteFile(path, []byte(fixture), 0o644); err != nil {
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	s, err := New(config.Default(), path, "", filepath.Join(dir, "out"), "olly")
+	s, err := New(cfg, path, "", filepath.Join(dir, "out"), "olly")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	return s, path
+}
+
+func newTestServer(t *testing.T) (*Server, string) {
+	t.Helper()
+	return newFileServer(t, config.Default(), "SKILL.md", fixture)
 }
 
 func post(t *testing.T, s *Server, path string, body any) *httptest.ResponseRecorder {
@@ -57,19 +62,19 @@ func post(t *testing.T, s *Server, path string, body any) *httptest.ResponseReco
 	return w
 }
 
-func getDoc(t *testing.T, s *Server) doc {
+func getFile(t *testing.T, s *Server, rel string) doc {
 	t.Helper()
 
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/doc", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("GET /api/doc = %d: %s", w.Code, w.Body)
-	}
-	var d doc
-	if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil {
-		t.Fatalf("decode doc: %v", err)
-	}
-	return d
+	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/doc?file="+rel, nil))
+	return decodeDoc(t, w)
+}
+
+// An empty rel means the first file in the set, the way the page sends it for a
+// single-file review.
+func getDoc(t *testing.T, s *Server) doc {
+	t.Helper()
+	return getFile(t, s, "")
 }
 
 func decodeDoc(t *testing.T, w *httptest.ResponseRecorder) doc {
@@ -117,19 +122,11 @@ func TestDoc(t *testing.T) {
 // The page builds its controls from what this serves, so these three are the whole
 // contract between the config and the browser.
 func TestDocServesTheSchema(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "SKILL.md")
-	if err := os.WriteFile(path, []byte(fixture), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	cfg := &config.Config{
 		Fields:  []config.Field{{Name: "severity", Label: "How bad", Values: []string{"blocker", "nit"}, Default: "nit"}},
 		Updater: config.Updater{Name: "my-updater"},
 	}
-	s, err := New(cfg, path, "", filepath.Join(dir, "out"), "olly")
-	if err != nil {
-		t.Fatal(err)
-	}
+	s, path := newFileServer(t, cfg, "SKILL.md", fixture)
 
 	d := getDoc(t, s)
 
@@ -310,8 +307,6 @@ func comment(t *testing.T, s *Server, passage, body string) {
 	commentOn(t, s, "", passage, body)
 }
 
-// An empty rel submits the first file in the set, the way the page sends it for a
-// single-file review.
 func submit(t *testing.T, s *Server) handoff.Result {
 	t.Helper()
 	return submitFile(t, s, "")
@@ -717,16 +712,8 @@ func TestFilesServesTheExplorerRow(t *testing.T) {
 // filter itself is browser state and no route accepts it, which is the other half of the
 // guarantee and the half no Go test can hold — keep it that way.
 func TestExtCannotChangeWhatShips(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "report.html")
 	const page = "<h1>Report</h1>\n<p>Comments autosave to disk; never push to a terminal.</p>\n"
-	if err := os.WriteFile(path, []byte(page), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s, err := New(config.Default(), path, "", filepath.Join(dir, "out"), "olly")
-	if err != nil {
-		t.Fatal(err)
-	}
+	s, _ := newFileServer(t, config.Default(), "report.html", page)
 
 	if got := getFiles(t, s); got[0].Ext != ".html" {
 		t.Fatalf("ext = %q; the default filter hides rows by this", got[0].Ext)
@@ -748,15 +735,7 @@ const htmlFixture = `<!doctype html>
 `
 
 func TestHTMLTarget(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "report.html")
-	if err := os.WriteFile(path, []byte(htmlFixture), 0o644); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
-	s, err := New(config.Default(), path, "", filepath.Join(dir, "out"), "olly")
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s, path := newFileServer(t, config.Default(), "report.html", htmlFixture)
 
 	d := getDoc(t, s)
 	if !strings.Contains(d.HTML, "<p><span data-o=") {
@@ -788,14 +767,6 @@ func TestHTMLTarget(t *testing.T) {
 	if reread := getDoc(t, s); len(reread.Threads) != 1 || reread.Threads[0].ID != created.Threads[0].ID {
 		t.Errorf("re-reading the file lost the thread: %+v", reread.Threads)
 	}
-}
-
-func getFile(t *testing.T, s *Server, rel string) doc {
-	t.Helper()
-
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/doc?file="+rel, nil))
-	return decodeDoc(t, w)
 }
 
 func TestDiscoversTheWholeDirectory(t *testing.T) {
@@ -918,15 +889,7 @@ func TestHTMLFileInDirectoryRenders(t *testing.T) {
 // A target with no extension, or one nobody has taught the tool about, has always been
 // rendered as Markdown. Listing HTML must not have changed that.
 func TestAnUnknownExtensionStillRendersAsMarkdown(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "notes.txt")
-	if err := os.WriteFile(path, []byte(fixture), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s, err := New(config.Default(), path, "", filepath.Join(dir, "out"), "olly")
-	if err != nil {
-		t.Fatal(err)
-	}
+	s, _ := newFileServer(t, config.Default(), "notes.txt", fixture)
 
 	if d := getDoc(t, s); !strings.Contains(d.HTML, `data-o="`) {
 		t.Errorf("notes.txt did not render:\n%s", d.HTML)

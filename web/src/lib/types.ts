@@ -1,14 +1,12 @@
-// Mirrors the JSON the Go server actually emits — see internal/server/server.go (doc,
+// The subset of the Go server's JSON this UI reads — see internal/server/server.go (doc,
 // fileEntry), internal/comments/comments.go (Thread, Comment), internal/config/config.go
-// (Field), and internal/handoff/{handoff,pending}.go (Suggestion, Payload, Result).
+// (Field), and internal/handoff/handoff.go (Result) for the full shapes.
 
 export interface Comment {
   id: string;
-  parent?: string;
   author: string;
   ts: string;
   body: string;
-  editedTs?: string;
   deleted?: boolean;
 }
 
@@ -20,7 +18,6 @@ export interface Thread {
   quote: string;
   status: "open" | "resolved";
   comments: Comment[];
-  impact?: string;
   [field: string]: unknown;
 }
 
@@ -47,24 +44,13 @@ export interface FileEntry {
   threads: number;
 }
 
-export interface Suggestion {
-  id: string;
-  file: string;
-  suggestion: string;
-  expected_impact: string;
-  [field: string]: unknown;
-}
+export type Filter = "markdown" | "all";
 
-export interface Payload {
-  skill_name: string;
-  skill_path: string;
-  mode: string;
-  improvement_suggestions: Suggestion[];
-}
-
+// Only the count of suggestions is ever read; the rest of the payload rides straight
+// through to the handoff file the server writes.
 export interface HandoffResult {
   file: string;
   prompt: string;
   changed: boolean;
-  payload: Payload;
+  payload: { improvement_suggestions: unknown[] };
 }

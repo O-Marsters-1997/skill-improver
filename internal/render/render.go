@@ -116,13 +116,12 @@ func (r *offsetRenderer) renderCodeSpan(
 func (r *offsetRenderer) renderRawHTML(
 	w util.BufWriter, source []byte, node ast.Node, entering bool,
 ) (ast.WalkStatus, error) {
-	if !entering {
-		return ast.WalkSkipChildren, nil
-	}
-	n := node.(*ast.RawHTML)
-	for i := range n.Segments.Len() {
-		seg := n.Segments.At(i)
-		writeMarkup(w, seg.Value(source), "mark")
+	if entering {
+		n := node.(*ast.RawHTML)
+		for i := range n.Segments.Len() {
+			seg := n.Segments.At(i)
+			writeMarkup(w, seg.Value(source), "mark")
+		}
 	}
 	return ast.WalkSkipChildren, nil
 }
@@ -224,22 +223,22 @@ func writeRun(w util.BufWriter, offset int, raw []byte) {
 }
 
 var (
-	openMarkerPattern  = regexp.MustCompile(`^<!--mc:a:([a-z0-9]{1,12})-->$`)
-	closeMarkerPattern = regexp.MustCompile(`^<!--mc:/a:[a-z0-9]{1,12}-->$`)
-	bookkeepingPrefix  = []byte("<!--mc:")
+	// Submatch 1 is "/" on a closing marker and empty on an opening one; submatch 2 is the id.
+	markerPattern     = regexp.MustCompile(`^<!--mc:(/?)a:([a-z0-9]{1,12})-->$`)
+	bookkeepingPrefix = []byte("<!--mc:")
 )
 
 // Raw HTML that is not ours is escaped and shown, never executed.
 func writeMarkup(w util.BufWriter, raw []byte, element string) {
 	markup := bytes.TrimSpace(raw)
+	marker := markerPattern.FindSubmatch(markup)
 	switch {
-	case openMarkerPattern.Match(markup):
-		id := openMarkerPattern.FindSubmatch(markup)[1]
-		_, _ = w.WriteString("<" + element + ` class="mc" data-id="`)
-		_, _ = w.Write(id)
-		_, _ = w.WriteString(`">`)
-	case closeMarkerPattern.Match(markup):
+	case marker != nil && len(marker[1]) > 0:
 		_, _ = w.WriteString("</" + element + ">")
+	case marker != nil:
+		_, _ = w.WriteString("<" + element + ` class="mc" data-id="`)
+		_, _ = w.Write(marker[2])
+		_, _ = w.WriteString(`">`)
 	case bytes.HasPrefix(markup, bookkeepingPrefix):
 		// The threads block and anything else mc owns renders as nothing.
 	default:

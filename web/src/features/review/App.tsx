@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { hiddenFileNames } from "@/lib/files";
 import { run, say } from "@/lib/notify";
-import type { HandoffResult } from "@/lib/types";
+import type { FileEntry, Filter, HandoffResult } from "@/lib/types";
 import { useDoc } from "@/hooks/useDoc";
-import { useFiles } from "@/hooks/useFiles";
 import { useSelection } from "@/hooks/useSelection";
 import { Composer } from "./Composer";
 import { Document } from "./Document";
@@ -15,23 +14,25 @@ import { HandoffPanel } from "./HandoffPanel";
 import { SelectionMenu } from "./SelectionMenu";
 import { ThreadList } from "./ThreadList";
 
-interface HandoffState {
-  open: boolean;
-  summary: string;
-  prompt: string | null;
-}
-
 export default function App() {
   const { doc, mutate } = useDoc();
-  const { files, filter, setFilter, refresh: refreshFiles } = useFiles();
+  const [files, setFiles] = useState<FileEntry[]>([]);
+  const [filter, setFilter] = useState<Filter>("markdown");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [handoff, setHandoff] = useState<HandoffState>({ open: false, summary: "", prompt: null });
+  const [handoff, setHandoff] = useState<{ summary: string; prompt: string | null } | null>(null);
 
   const docContainerRef = useRef<HTMLDivElement>(null);
-  const { pending, anchorRect, composerOpen, menuRef, openComposer, closeComposer } = useSelection(
-    docContainerRef,
-    (message) => say(message, true),
-  );
+  const { pending, anchorRect, composerOpen, menuRef, openComposer, closeComposer } =
+    useSelection(docContainerRef);
+
+  // Returns the fetched array too, not just via setFiles — a caller that awaits it and
+  // immediately needs the result (the handoff summary) would otherwise read the stale
+  // pre-update `files` from its own render closure.
+  const refreshFiles = useCallback(async () => {
+    const fresh = await api<FileEntry[]>("/api/files");
+    setFiles(fresh);
+    return fresh;
+  }, []);
 
   useEffect(() => {
     document.title = doc?.name ? `${doc.name} — skill-review` : "skill-review";
@@ -63,9 +64,7 @@ export default function App() {
   function handleToggleStatus(id: string) {
     const thread = doc?.threads.find((t) => t.id === id);
     const status = thread?.status === "resolved" ? "open" : "resolved";
-    void run(async () => {
-      await mutate("/api/thread", { id, status });
-    });
+    void run(() => mutate("/api/thread", { id, status }));
   }
 
   function handleDelete(id: string) {
@@ -76,9 +75,7 @@ export default function App() {
   }
 
   function handleFieldChange(id: string, field: string, value: string) {
-    void run(async () => {
-      await mutate("/api/thread", { id, fields: { [field]: value } });
-    });
+    void run(() => mutate("/api/thread", { id, fields: { [field]: value } }));
   }
 
   async function copyPrompt(prompt: string) {
@@ -98,7 +95,6 @@ export default function App() {
 
       if (count === 0) {
         setHandoff({
-          open: true,
           summary: "Nothing to hand off — every open thread has already been archived.",
           prompt: null,
         });
@@ -112,7 +108,7 @@ export default function App() {
         ? `${noun} pending in ${result.file}${from}`
         : `Nothing new — ${noun} still pending in ${result.file}${from}`;
 
-      setHandoff({ open: true, summary, prompt: result.prompt });
+      setHandoff({ summary, prompt: result.prompt });
       await copyPrompt(result.prompt);
     });
   }
@@ -157,13 +153,14 @@ export default function App() {
 
       <SelectionMenu menuRef={menuRef} anchorRect={anchorRect} onComment={openComposer} />
 
-      <HandoffPanel
-        open={handoff.open}
-        summary={handoff.summary}
-        prompt={handoff.prompt}
-        onCopy={() => void copyPrompt(handoff.prompt ?? "")}
-        onClose={() => setHandoff((h) => ({ ...h, open: false }))}
-      />
+      {handoff && (
+        <HandoffPanel
+          summary={handoff.summary}
+          prompt={handoff.prompt}
+          onCopy={() => void copyPrompt(handoff.prompt ?? "")}
+          onClose={() => setHandoff(null)}
+        />
+      )}
 
       <Toaster />
     </div>

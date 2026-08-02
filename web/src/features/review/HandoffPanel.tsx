@@ -1,7 +1,6 @@
 import { Button } from "@/components/ui/button";
 
 interface HandoffPanelProps {
-  open: boolean;
   summary: string;
   prompt: string | null;
   onCopy: () => void;
@@ -11,9 +10,7 @@ interface HandoffPanelProps {
 // Non-modal by design — this reports on a background action, it doesn't gate one. A
 // Dialog would trap focus and block the page, which the prompt (worth keeping visible
 // while you go do something else) is deliberately not asking for.
-export function HandoffPanel({ open, summary, prompt, onCopy, onClose }: HandoffPanelProps) {
-  if (!open) return null;
-
+export function HandoffPanel({ summary, prompt, onCopy, onClose }: HandoffPanelProps) {
   return (
     <div
       role="status"

@@ -83,17 +83,13 @@ type Payload struct {
 	Suggestions []Suggestion `json:"improvement_suggestions"`
 }
 
-// Build turns one document's threads into a payload. Resolved threads and threads whose
+// Build turns one document's threads into suggestions. Resolved threads and threads whose
 // comments have all been retracted are left out.
 //
-// Submit is what completes the result: Mode and each Suggestion's File depend on the
-// paths of the review, which Build is not given.
-func Build(cfg *config.Config, threads []comments.Thread, skillName, skillPath string) Payload {
-	payload := Payload{
-		SkillName:   skillName,
-		SkillPath:   skillPath,
-		Suggestions: []Suggestion{},
-	}
+// Submit is what completes the result: the payload header and each Suggestion's File
+// depend on the paths of the review, which Build is not given.
+func Build(cfg *config.Config, threads []comments.Thread) []Suggestion {
+	suggestions := []Suggestion{}
 
 	for _, t := range threads {
 		if t.Status == "resolved" {
@@ -108,7 +104,7 @@ func Build(cfg *config.Config, threads []comments.Thread, skillName, skillPath s
 		for _, f := range cfg.Fields {
 			fields[f.Name] = oneOf(t.Fields[f.Name], f.Values, f.Default)
 		}
-		payload.Suggestions = append(payload.Suggestions, Suggestion{
+		suggestions = append(suggestions, Suggestion{
 			ID:             t.ID,
 			Fields:         fields,
 			Suggestion:     describe(bodies, t.Quote),
@@ -116,18 +112,18 @@ func Build(cfg *config.Config, threads []comments.Thread, skillName, skillPath s
 		})
 	}
 
-	sortSuggestions(cfg, payload.Suggestions)
-	return payload
+	sortSuggestions(cfg, suggestions)
+	return suggestions
 }
 
 // The first field is the ranking one, ordered as its values are listed. Submit runs this
 // again over the concatenation of several documents' suggestions, which a stable sort
 // leaves ranked across the whole review rather than within each file.
 func sortSuggestions(cfg *config.Config, suggestions []Suggestion) {
-	sortBy, ok := cfg.SortField()
-	if !ok {
+	if len(cfg.Fields) == 0 {
 		return
 	}
+	sortBy := cfg.Fields[0]
 	slices.SortStableFunc(suggestions, func(a, b Suggestion) int {
 		return slices.Index(sortBy.Values, a.Fields[sortBy.Name]) -
 			slices.Index(sortBy.Values, b.Fields[sortBy.Name])

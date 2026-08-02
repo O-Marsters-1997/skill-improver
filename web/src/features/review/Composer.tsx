@@ -12,11 +12,6 @@ interface ComposerProps {
 export function Composer({ quote, onCancel, onSubmit }: ComposerProps) {
   const [body, setBody] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
 
   // Escape is handled by useSelection (it owns menu + composer visibility); this only
   // owns the form's own submit shortcut.
@@ -52,9 +47,9 @@ export function Composer({ quote, onCancel, onSubmit }: ComposerProps) {
 
       <Label htmlFor="composer-body">Comment</Label>
       <Textarea
-        ref={textareaRef}
         id="composer-body"
         rows={4}
+        autoFocus
         required
         placeholder="What should change, and why?"
         value={body}

@@ -38,6 +38,41 @@ func assertOffsets(t *testing.T, src, out []byte) {
 	}
 }
 
+func assertSubstrings(t *testing.T, got []byte, contains, excludes []string) {
+	t.Helper()
+	for _, want := range contains {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range excludes {
+		if strings.Contains(string(got), unwanted) {
+			t.Errorf("unexpected %q in:\n%s", unwanted, got)
+		}
+	}
+}
+
+func readTestdata(t *testing.T, name string) []byte {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return src
+}
+
+func assertGolden(t *testing.T, got []byte, name string) {
+	t.Helper()
+	if *update {
+		if err := os.WriteFile(filepath.Join("testdata", name), got, 0o644); err != nil {
+			t.Fatalf("update golden: %v", err)
+		}
+	}
+	if want := readTestdata(t, name); !bytes.Equal(got, want) {
+		t.Errorf("output differs from testdata/%s; re-run with -update if intended", name)
+	}
+}
+
 func TestHTML(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -116,16 +151,7 @@ func TestHTML(t *testing.T) {
 			if err != nil {
 				t.Fatalf("HTML: %v", err)
 			}
-			for _, want := range tt.contains {
-				if !strings.Contains(string(got), want) {
-					t.Errorf("missing %q in:\n%s", want, got)
-				}
-			}
-			for _, unwanted := range tt.excludes {
-				if strings.Contains(string(got), unwanted) {
-					t.Errorf("unexpected %q in:\n%s", unwanted, got)
-				}
-			}
+			assertSubstrings(t, got, tt.contains, tt.excludes)
 			assertOffsets(t, []byte(tt.src), got)
 		})
 	}
@@ -134,30 +160,14 @@ func TestHTML(t *testing.T) {
 func TestHTMLGolden(t *testing.T) {
 	// A local copy, not the root fixture: that one is the demo document `just run`
 	// opens, so reviewing it would rewrite the input this golden is pinned to.
-	src, err := os.ReadFile(filepath.Join("testdata", "example-SKILL.md"))
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
+	src := readTestdata(t, "example-SKILL.md")
 
 	got, err := HTML(src)
 	if err != nil {
 		t.Fatalf("HTML: %v", err)
 	}
 	assertOffsets(t, src, got)
-
-	golden := filepath.Join("testdata", "example-SKILL.html")
-	if *update {
-		if err := os.WriteFile(golden, got, 0o644); err != nil {
-			t.Fatalf("update golden: %v", err)
-		}
-	}
-	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("output differs from %s; re-run with -update if intended", golden)
-	}
+	assertGolden(t, got, "example-SKILL.html")
 }
 
 func FuzzOffsets(f *testing.F) {

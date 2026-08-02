@@ -94,11 +94,7 @@ func (t Thread) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var b bytes.Buffer
-	b.Write(head[:len(head)-1])
-	b.WriteByte(',')
-	b.Write(rest[1:])
-	return b.Bytes(), nil
+	return append(append(head[:len(head)-1], ','), rest[1:]...), nil
 }
 
 // Any string key that is not one of the fixed ones is a configured field. Keeping them
@@ -148,8 +144,12 @@ const (
 )
 
 var (
+	idPattern     = regexp.MustCompile(`^[a-z0-9]{1,12}$`)
 	markerPattern = regexp.MustCompile(`<!--mc:(/?)a:([a-z0-9]{1,12})-->`)
 	threadPattern = regexp.MustCompile(`(?m)^<!--mc:t (.*)-->[ \t]*$`)
+	// Block-mode markers sit on a line of their own; taking the line with them keeps
+	// the fence they wrapped from being left floating in a blank.
+	ownLineMarker = regexp.MustCompile(`(?m)^<!--mc:/?a:[a-z0-9]{1,12}-->\n`)
 )
 
 // A document with no threads block is not an error, it simply has no comments.
@@ -207,13 +207,8 @@ func Anchor(src []byte, start, end int, quote, id string, format Format) ([]byte
 		opening, closing = opening+"\n", "\n"+closing
 	}
 
-	out := make([]byte, 0, len(src)+len(opening)+len(closing))
-	out = append(out, src[:start]...)
-	out = append(out, opening...)
-	out = append(out, src[start:end]...)
-	out = append(out, closing...)
-	out = append(out, src[end:]...)
-	return out, string(src[start:end]), nil
+	anchored := string(src[start:end])
+	return splice(src, start, end, opening+anchored+closing), anchored, nil
 }
 
 // Only the target thread's line is rewritten, so unknown fields on other threads
@@ -230,8 +225,8 @@ func Upsert(src []byte, t Thread) ([]byte, error) {
 		return append(out, "\n\n"+threadsBegin+"\n"+line+"\n"+threadsEnd+"\n"...), nil
 	}
 
-	if loc := findThreadLine(block, t.ID); loc != nil {
-		return splice(src, blockStart+loc[0], blockStart+loc[1], line), nil
+	if lineStart, lineEnd, ok := findThreadLine(block, t.ID); ok {
+		return splice(src, blockStart+lineStart, blockStart+lineEnd, line), nil
 	}
 	return splice(src, blockEnd, blockEnd, line+"\n"), nil
 }
@@ -241,17 +236,16 @@ func Remove(src []byte, id string) ([]byte, error) {
 		return nil, ErrBadID
 	}
 
-	out := src
-	block, blockStart, _, ok := threadsBlock(out)
+	block, blockStart, _, ok := threadsBlock(src)
 	if !ok {
 		return nil, ErrNotFound
 	}
-	loc := findThreadLine(block, id)
-	if loc == nil {
+	lineStart, lineEnd, ok := findThreadLine(block, id)
+	if !ok {
 		return nil, ErrNotFound
 	}
 	// Take the newline with the line so the block does not accumulate blanks.
-	out = splice(out, blockStart+loc[0], min(blockStart+loc[1]+1, len(out)), "")
+	out := splice(src, blockStart+lineStart, min(blockStart+lineEnd+1, len(src)), "")
 
 	// Block-mode markers were written on their own line; drop that line whole.
 	for _, marker := range []string{openMarker(id) + "\n", "\n" + closeMarker(id), openMarker(id), closeMarker(id)} {
@@ -270,15 +264,10 @@ func Clear(src []byte) []byte {
 	blockStart := start - len(threadsBegin) - 1
 	blockEnd := min(end+len(threadsEnd)+1, len(src))
 	out := splice(src, blockStart, blockEnd, "")
-
-	// Block-mode markers sit on a line of their own; take the line, or the fence they
-	// wrapped is left floating in a blank.
 	out = ownLineMarker.ReplaceAll(out, nil)
 	out = markerPattern.ReplaceAll(out, nil)
 	return append(bytes.TrimRight(out, "\n"), '\n')
 }
-
-var ownLineMarker = regexp.MustCompile(`(?m)^<!--mc:/?a:[a-z0-9]{1,12}-->\n`)
 
 func NewID() string {
 	return strconv.FormatUint(rand.Uint64N(36*36*36*36*36*36), 36)
@@ -309,21 +298,7 @@ func IDs(src []byte) map[string]bool {
 func openMarker(id string) string  { return "<!--mc:a:" + id + "-->" }
 func closeMarker(id string) string { return "<!--mc:/a:" + id + "-->" }
 
-func validID(id string) bool {
-	if len(id) == 0 || len(id) > 12 {
-		return false
-	}
-	for i := range len(id) {
-		if !isBase36(id[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func isBase36(c byte) bool {
-	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z'
-}
+func validID(id string) bool { return idPattern.MatchString(id) }
 
 func threadsBlock(src []byte) (block []byte, start, end int, ok bool) {
 	i := bytes.Index(src, []byte(threadsBegin))
@@ -342,14 +317,14 @@ func threadsBlock(src []byte) (block []byte, start, end int, ok bool) {
 	return src[start:end], start, end, true
 }
 
-func findThreadLine(block []byte, id string) []int {
+func findThreadLine(block []byte, id string) (start, end int, ok bool) {
 	for _, loc := range threadPattern.FindAllSubmatchIndex(block, -1) {
 		var t Thread
 		if err := json.Unmarshal(block[loc[2]:loc[3]], &t); err == nil && t.ID == id {
-			return []int{loc[0], loc[1]}
+			return loc[0], loc[1], true
 		}
 	}
-	return nil
+	return 0, 0, false
 }
 
 func threadLine(t Thread) (string, error) {

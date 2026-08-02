@@ -1,7 +1,9 @@
 package handoff
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +24,7 @@ const reviewed = `# Report
 <!--mc:threads:end-->
 `
 
-func writeSkill(t *testing.T, dir string) {
+func writeSkill(t *testing.T, dir string) string {
 	t.Helper()
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -31,6 +33,17 @@ func writeSkill(t *testing.T, dir string) {
 	if err := os.WriteFile(filepath.Join(dir, skill.FileName), []byte("---\nname: ideate\n---\n\n# Ideate\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return dir
+}
+
+func submit(t *testing.T, outDir, skillPath string, docs ...Doc) Result {
+	t.Helper()
+
+	got, err := Submit(config.Default(), outDir, skillPath, docs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
 func writeDoc(t *testing.T, path string, src ...string) Doc {
@@ -49,16 +62,60 @@ func writeDoc(t *testing.T, path string, src ...string) Doc {
 	return Doc{Path: path, Src: body}
 }
 
-func TestSubmitNamesTheSkillNotTheDocument(t *testing.T) {
-	root := t.TempDir()
-	skillDir := filepath.Join(root, "skills", "ideate")
-	writeSkill(t, skillDir)
-	doc := writeDoc(t, filepath.Join(root, "reports", "2026-08-02-ideate.md"))
+// n open threads all left at the default priority, so nothing but the id can tie-break
+// them once sortSuggestions has run.
+func writeTiedDoc(t *testing.T, path string, n int) Doc {
+	t.Helper()
 
-	got, err := Submit(config.Default(), filepath.Join(root, "out"), skillDir, []Doc{doc})
+	var body, block strings.Builder
+	body.WriteString("# Report\n\n")
+	block.WriteString("<!--mc:threads:begin-->\n")
+	for i := range n {
+		id := fmt.Sprintf("id%02d", i)
+		fmt.Fprintf(&body, "<!--mc:a:%s-->claim %d<!--mc:/a:%s-->\n\n", id, i, id)
+		fmt.Fprintf(&block, "<!--mc:t {\"id\":%q,\"quote\":\"claim %d\",\"status\":\"open\","+
+			"\"comments\":[{\"id\":\"c1\",\"author\":\"olly\",\"ts\":\"2026-08-02T00:00:00Z\",\"body\":\"say why\"}]}-->\n", id, i)
+	}
+	block.WriteString("<!--mc:threads:end-->\n")
+
+	return writeDoc(t, path, body.String()+block.String())
+}
+
+// The merge collects out of a map, and Go randomises map iteration, so a stable sort on
+// its own leaves same-priority suggestions in a different order on every run.
+func TestSubmitIsDeterministic(t *testing.T) {
+	root := t.TempDir()
+	skillDir := writeSkill(t, filepath.Join(root, "ideate"))
+	doc := writeTiedDoc(t, filepath.Join(root, "reports", "2026-08-02-ideate.md"), 8)
+	outDir := filepath.Join(root, "out")
+
+	first := submit(t, outDir, skillDir, doc)
+	want, err := os.ReadFile(first.File)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	for i := range 5 {
+		got := submit(t, outDir, skillDir, doc)
+		if got.Changed {
+			t.Errorf("resubmit %d reports the pending file changed; the threads did not", i)
+		}
+		body, err := os.ReadFile(got.File)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(body, want) {
+			t.Fatalf("resubmit %d reordered the pending file:\ngot:\n%s\nwant:\n%s", i, body, want)
+		}
+	}
+}
+
+func TestSubmitNamesTheSkillNotTheDocument(t *testing.T) {
+	root := t.TempDir()
+	skillDir := writeSkill(t, filepath.Join(root, "skills", "ideate"))
+	doc := writeDoc(t, filepath.Join(root, "reports", "2026-08-02-ideate.md"))
+
+	got := submit(t, filepath.Join(root, "out"), skillDir, doc)
 
 	if got.Payload.Mode != ModeOutput {
 		t.Errorf("mode = %q; want %q", got.Payload.Mode, ModeOutput)
@@ -78,14 +135,10 @@ func TestSubmitNamesTheSkillNotTheDocument(t *testing.T) {
 func TestSubmitModeIsDerivedFromThePaths(t *testing.T) {
 	t.Run("a file inside the skill is instructions", func(t *testing.T) {
 		root := t.TempDir()
-		skillDir := filepath.Join(root, "ideate")
-		writeSkill(t, skillDir)
+		skillDir := writeSkill(t, filepath.Join(root, "ideate"))
 		doc := writeDoc(t, filepath.Join(skillDir, "references", "notes.md"))
 
-		got, err := Submit(config.Default(), filepath.Join(root, "out"), skillDir, []Doc{doc})
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := submit(t, filepath.Join(root, "out"), skillDir, doc)
 		if got.Payload.Mode != ModeInstructions {
 			t.Errorf("mode = %q; want %q", got.Payload.Mode, ModeInstructions)
 		}
@@ -95,8 +148,7 @@ func TestSubmitModeIsDerivedFromThePaths(t *testing.T) {
 	// resolving both sides every real skill computes as output.
 	t.Run("a skill reached through a symlink is instructions", func(t *testing.T) {
 		root := t.TempDir()
-		actual := filepath.Join(root, "agents", "ideate")
-		writeSkill(t, actual)
+		actual := writeSkill(t, filepath.Join(root, "agents", "ideate"))
 		doc := writeDoc(t, filepath.Join(actual, skill.FileName))
 
 		link := filepath.Join(root, "claude", "ideate")
@@ -107,10 +159,7 @@ func TestSubmitModeIsDerivedFromThePaths(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		got, err := Submit(config.Default(), filepath.Join(root, "out"), link, []Doc{doc})
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := submit(t, filepath.Join(root, "out"), link, doc)
 		if got.Payload.Mode != ModeInstructions {
 			t.Errorf("mode = %q; want %q", got.Payload.Mode, ModeInstructions)
 		}
@@ -123,8 +172,7 @@ func TestSubmitModeIsDerivedFromThePaths(t *testing.T) {
 	// SKILL.md into a directory that is otherwise real.
 	t.Run("a SKILL.md reached through a symlink is instructions", func(t *testing.T) {
 		root := t.TempDir()
-		actual := filepath.Join(root, "agents", "ideate")
-		writeSkill(t, actual)
+		actual := writeSkill(t, filepath.Join(root, "agents", "ideate"))
 
 		linked := filepath.Join(root, "claude", "ideate")
 		if err := os.MkdirAll(linked, 0o755); err != nil {
@@ -135,10 +183,7 @@ func TestSubmitModeIsDerivedFromThePaths(t *testing.T) {
 		}
 		doc := Doc{Path: filepath.Join(actual, skill.FileName), Src: []byte(reviewed)}
 
-		got, err := Submit(config.Default(), filepath.Join(root, "out"), linked, []Doc{doc})
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := submit(t, filepath.Join(root, "out"), linked, doc)
 		if got.Payload.Mode != ModeInstructions {
 			t.Errorf("mode = %q; want %q", got.Payload.Mode, ModeInstructions)
 		}
@@ -150,10 +195,7 @@ func TestSubmitModeIsDerivedFromThePaths(t *testing.T) {
 		skillDir := filepath.Join(root, "ideate")
 		doc := writeDoc(t, filepath.Join(skillDir, skill.FileName), "---\nname: ideate\n---\n\n"+reviewed)
 
-		got, err := Submit(config.Default(), filepath.Join(root, "out"), doc.Path, []Doc{doc})
-		if err != nil {
-			t.Fatal(err)
-		}
+		got := submit(t, filepath.Join(root, "out"), doc.Path, doc)
 		if got.Payload.Mode != ModeInstructions || got.Payload.SkillName != "ideate" {
 			t.Errorf("payload = %+v", got.Payload)
 		}
@@ -164,25 +206,18 @@ func TestSubmitModeIsDerivedFromThePaths(t *testing.T) {
 // document must add to what an earlier call left pending, not replace it.
 func TestSubmitAccumulatesAcrossCalls(t *testing.T) {
 	root := t.TempDir()
-	skillDir := filepath.Join(root, "ideate")
-	writeSkill(t, skillDir)
+	skillDir := writeSkill(t, filepath.Join(root, "ideate"))
 	outDir := filepath.Join(root, "out")
 
 	docA := writeDoc(t, filepath.Join(root, "a.md"))
 	docB := writeDoc(t, filepath.Join(root, "b.md"), strings.ReplaceAll(reviewed, "aaa", "bbb"))
 
-	first, err := Submit(config.Default(), outDir, skillDir, []Doc{docA})
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := submit(t, outDir, skillDir, docA)
 	if len(first.Payload.Suggestions) != 1 || first.Payload.Suggestions[0].File != docA.Path {
 		t.Fatalf("first submit = %+v", first.Payload.Suggestions)
 	}
 
-	second, err := Submit(config.Default(), outDir, skillDir, []Doc{docB})
-	if err != nil {
-		t.Fatal(err)
-	}
+	second := submit(t, outDir, skillDir, docB)
 	if len(second.Payload.Suggestions) != 2 {
 		t.Fatalf("got %d suggestions; want doc A's to survive alongside doc B's", len(second.Payload.Suggestions))
 	}
@@ -195,21 +230,15 @@ func TestSubmitAccumulatesAcrossCalls(t *testing.T) {
 // already sitting in pending.json — the merge keys on id, this call's copy replacing it.
 func TestSubmitOfTheSameDocReplacesItsOwnEntry(t *testing.T) {
 	root := t.TempDir()
-	skillDir := filepath.Join(root, "ideate")
-	writeSkill(t, skillDir)
+	skillDir := writeSkill(t, filepath.Join(root, "ideate"))
 	outDir := filepath.Join(root, "out")
 
 	retriaged := strings.Replace(reviewed, `"status":"open"`, `"status":"open","priority":"high"`, 1)
 	docV1 := writeDoc(t, filepath.Join(root, "a.md"))
 	docV2 := writeDoc(t, filepath.Join(root, "a.md"), retriaged)
 
-	if _, err := Submit(config.Default(), outDir, skillDir, []Doc{docV1}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := Submit(config.Default(), outDir, skillDir, []Doc{docV2})
-	if err != nil {
-		t.Fatal(err)
-	}
+	submit(t, outDir, skillDir, docV1)
+	got := submit(t, outDir, skillDir, docV2)
 	if len(got.Payload.Suggestions) != 1 {
 		t.Fatalf("got %d suggestions; want the resubmit to replace, not duplicate", len(got.Payload.Suggestions))
 	}
@@ -222,8 +251,7 @@ func TestSubmitOfTheSameDocReplacesItsOwnEntry(t *testing.T) {
 // must never come back for a second round, so it must not appear there either.
 func TestSubmitExcludesArchivedFromSubmitted(t *testing.T) {
 	root := t.TempDir()
-	skillDir := filepath.Join(root, "ideate")
-	writeSkill(t, skillDir)
+	skillDir := writeSkill(t, filepath.Join(root, "ideate"))
 	outDir := filepath.Join(root, "out")
 	doc := writeDoc(t, filepath.Join(root, "a.md"))
 
@@ -238,10 +266,7 @@ func TestSubmitExcludesArchivedFromSubmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := Submit(config.Default(), outDir, skillDir, []Doc{doc})
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := submit(t, outDir, skillDir, doc)
 	if len(got.Submitted) != 0 {
 		t.Errorf("submitted = %v; want the archived id excluded", got.Submitted)
 	}
@@ -252,14 +277,10 @@ func TestSubmitExcludesArchivedFromSubmitted(t *testing.T) {
 
 func TestPromptTellsTheUpdaterWhatItIsLookingAt(t *testing.T) {
 	root := t.TempDir()
-	skillDir := filepath.Join(root, "ideate")
-	writeSkill(t, skillDir)
+	skillDir := writeSkill(t, filepath.Join(root, "ideate"))
 	doc := writeDoc(t, filepath.Join(root, "report.md"))
 
-	got, err := Submit(config.Default(), filepath.Join(root, "out"), skillDir, []Doc{doc})
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := submit(t, filepath.Join(root, "out"), skillDir, doc)
 	// The #3 spike found the inference itself robust but the edit calibration fragile:
 	// a lone undiagnosed observation drew an invented rule that contradicted an earlier
 	// run. Both guards against that have to survive in the prompt.

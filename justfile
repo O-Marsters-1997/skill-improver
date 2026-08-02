@@ -19,6 +19,7 @@ test *ARGS:
 # The property the tool rests on: a span's text is exactly the source bytes at its offset
 fuzz TIME='30s':
     go test ./internal/render -run '^$' -fuzz FuzzOffsets -fuzztime {{TIME}}
+    go test ./internal/render -run '^$' -fuzz FuzzHTMLOffsets -fuzztime {{TIME}}
 
 fmt:
     gofmt -w cmd internal

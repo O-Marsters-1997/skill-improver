@@ -23,7 +23,7 @@ func TestAnchor(t *testing.T) {
 
 	t.Run("exact offsets wrap exactly the quote", func(t *testing.T) {
 		start, end := offsetOf(doc, "never push")
-		got, anchored, err := Anchor([]byte(doc), start, end, "never push", "k3f")
+		got, anchored, err := Anchor([]byte(doc), start, end, "never push", "k3f", Markdown)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
 		}
@@ -38,7 +38,7 @@ func TestAnchor(t *testing.T) {
 
 	t.Run("drifted offsets snap to the quote", func(t *testing.T) {
 		start, end := offsetOf(doc, "never push")
-		got, anchored, err := Anchor([]byte(doc), start-9, end-9, "never push", "k3f")
+		got, anchored, err := Anchor([]byte(doc), start-9, end-9, "never push", "k3f", Markdown)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
 		}
@@ -55,7 +55,7 @@ func TestAnchor(t *testing.T) {
 	// so they win and the caller is told what was actually wrapped.
 	t.Run("unmatchable quote falls back to the offsets", func(t *testing.T) {
 		start, end := offsetOf(doc, "never push to a terminal")
-		_, anchored, err := Anchor([]byte(doc), start, end, "never push terminal", "k3f")
+		_, anchored, err := Anchor([]byte(doc), start, end, "never push terminal", "k3f", Markdown)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
 		}
@@ -81,7 +81,7 @@ func TestAnchor(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				_, _, err := Anchor([]byte(tt.src), tt.start, tt.end, tt.quote, tt.id)
+				_, _, err := Anchor([]byte(tt.src), tt.start, tt.end, tt.quote, tt.id, Markdown)
 				if !errors.Is(err, tt.want) {
 					t.Errorf("got %v; want %v", err, tt.want)
 				}
@@ -92,7 +92,7 @@ func TestAnchor(t *testing.T) {
 	t.Run("refuses to anchor inside the threads block", func(t *testing.T) {
 		src := "text\n\n" + threadsBegin + "\n" + threadsEnd + "\n"
 		start, end := offsetOf(src, threadsBegin)
-		_, _, err := Anchor([]byte(src), start, end, threadsBegin, "k3f")
+		_, _, err := Anchor([]byte(src), start, end, threadsBegin, "k3f", Markdown)
 		if !errors.Is(err, ErrInThreads) {
 			t.Errorf("got %v; want ErrInThreads", err)
 		}
@@ -114,7 +114,7 @@ func TestAnchor(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				start, end := offsetOf(src, tt.sub)
-				_, _, err := Anchor([]byte(src), start, end, tt.sub, "bbb")
+				_, _, err := Anchor([]byte(src), start, end, tt.sub, "bbb", Markdown)
 				if !errors.Is(err, tt.wantErr) {
 					t.Errorf("got %v; want %v", err, tt.wantErr)
 				}
@@ -125,7 +125,7 @@ func TestAnchor(t *testing.T) {
 	t.Run("expands out of a fenced code block", func(t *testing.T) {
 		src := "Before\n\n" + fence + "go\nfmt.Println(1)\n" + fence + "\n\nAfter\n"
 		start, end := offsetOf(src, "Println")
-		got, _, err := Anchor([]byte(src), start, end, "Println", "k3f")
+		got, _, err := Anchor([]byte(src), start, end, "Println", "k3f", Markdown)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
 		}
@@ -139,12 +139,29 @@ func TestAnchor(t *testing.T) {
 		src := "Before\n\n" + fence + "\ncode\n" + fence + "\n\nAfter\n"
 		start, _ := offsetOf(src, "Before")
 		_, end := offsetOf(src, "code")
-		got, _, err := Anchor([]byte(src), start, end, "", "k3f")
+		got, _, err := Anchor([]byte(src), start, end, "", "k3f", Markdown)
 		if err != nil {
 			t.Fatalf("Anchor: %v", err)
 		}
 		if !strings.Contains(string(got), fence+"\ncode\n"+fence+"\n<!--mc:/a:k3f-->") {
 			t.Errorf("close marker not pushed past the fence:\n%s", got)
+		}
+	})
+
+	// Backticks in an HTML host are text, not a code fence, so growing the span to
+	// swallow them would move the anchor off what the reviewer selected.
+	t.Run("an HTML host does not expand fences", func(t *testing.T) {
+		src := "<p>Before</p>\n\n" + fence + "go\nfmt.Println(1)\n" + fence + "\n\n<p>After</p>\n"
+		start, end := offsetOf(src, "Println")
+		got, anchored, err := Anchor([]byte(src), start, end, "Println", "k3f", HTML)
+		if err != nil {
+			t.Fatalf("Anchor: %v", err)
+		}
+		if anchored != "Println" {
+			t.Errorf("anchored = %q; want %q", anchored, "Println")
+		}
+		if !strings.Contains(string(got), "fmt.<!--mc:a:k3f-->Println<!--mc:/a:k3f-->(1)") {
+			t.Errorf("markers were moved out of the backticks:\n%s", got)
 		}
 	})
 }

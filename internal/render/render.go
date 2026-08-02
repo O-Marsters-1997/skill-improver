@@ -1,6 +1,6 @@
-// Package render turns Markdown into HTML that remembers where every character
+// Package render turns a source file into HTML that remembers where every character
 // came from: each run of source text is wrapped in a span carrying its byte offset
-// as data-o.
+// as data-o. HTML renders a Markdown source; HTMLDoc renders an HTML one.
 //
 // That is the whole reason this tool renders server-side. The browser never has to
 // reverse-engineer which part of the source a selection came from, it reads an
@@ -188,10 +188,38 @@ func writeSpan(w util.BufWriter, source []byte, seg text.Segment) {
 	for range seg.Padding {
 		_ = w.WriteByte(' ')
 	}
+	writeOffsetSpan(w, seg.Start, source[seg.Start:seg.Stop])
+}
+
+// A CR never survives into the DOM: the HTML parser folds CR and CRLF to LF before
+// textContent exists, and the browser measures offsets with byteLength(textContent). A
+// CR inside a span would therefore be a byte data-o counts and the browser cannot, so
+// every offset taken after it in that span would drift by one per line. Each CR ends the
+// run and is written outside any span, where nothing measures it.
+//
+// Assertions on the rendered bytes cannot see this — only the parsed DOM can — so it is
+// fixed here rather than pinned by a test of the output.
+func writeOffsetSpan(w util.BufWriter, offset int, raw []byte) {
+	for {
+		i := bytes.IndexByte(raw, '\r')
+		if i < 0 {
+			break
+		}
+		writeRun(w, offset, raw[:i])
+		_ = w.WriteByte('\r')
+		raw, offset = raw[i+1:], offset+i+1
+	}
+	writeRun(w, offset, raw)
+}
+
+// The run's text is the source bytes escaped, never decoded: unescaping it recovers
+// exactly source[offset:offset+n], which is the contract the browser and the offset
+// property both rely on.
+func writeRun(w util.BufWriter, offset int, raw []byte) {
 	_, _ = w.WriteString(`<span data-o="`)
-	_, _ = w.WriteString(strconv.Itoa(seg.Start))
+	_, _ = w.WriteString(strconv.Itoa(offset))
 	_, _ = w.WriteString(`">`)
-	html.DefaultWriter.RawWrite(w, source[seg.Start:seg.Stop])
+	html.DefaultWriter.RawWrite(w, raw)
 	_, _ = w.WriteString(`</span>`)
 }
 

@@ -599,6 +599,58 @@ func TestExtCannotChangeWhatShips(t *testing.T) {
 	}
 }
 
+const htmlFixture = `<!doctype html>
+<html>
+<body>
+<p>Comments autosave to disk; never push to a terminal.</p>
+<script>alert(1)</script>
+</body>
+</html>
+`
+
+func TestHTMLTarget(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "report.html")
+	if err := os.WriteFile(path, []byte(htmlFixture), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	s, err := New(config.Default(), path, "", filepath.Join(dir, "out"), "olly")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	d := getDoc(t, s)
+	if !strings.Contains(d.HTML, "<p><span data-o=") {
+		t.Errorf("the HTML target was not rendered by the HTML renderer:\n%s", d.HTML)
+	}
+	if strings.Contains(d.HTML, "script") || strings.Contains(d.HTML, "alert(1)") {
+		t.Errorf("the script reached the page:\n%s", d.HTML)
+	}
+
+	start, end := offsetOf(t, htmlFixture, "never push")
+	created := decodeDoc(t, post(t, s, "/api/anchor", anchorRequest{
+		Rev: d.Rev, Start: start, End: end, Quote: "never push", Body: "say why",
+	}))
+	if len(created.Threads) != 1 || created.Threads[0].Quote != "never push" {
+		t.Fatalf("threads = %+v", created.Threads)
+	}
+
+	onDisk := string(mustRead(t, path))
+	markers := "<!--mc:a:" + created.Threads[0].ID + "-->never push<!--mc:/a:" + created.Threads[0].ID + "-->"
+	if !strings.Contains(onDisk, markers) {
+		t.Errorf("marker pair missing from the file:\n%s", onDisk)
+	}
+	// comments.Anchor refuses any span at or past the threads block, so the block has to
+	// sit after everything reviewable — which for an HTML file means after </html>.
+	if strings.Index(onDisk, "<!--mc:threads:begin-->") < strings.Index(onDisk, "</html>") {
+		t.Errorf("threads block is not after </html>:\n%s", onDisk)
+	}
+
+	if reread := getDoc(t, s); len(reread.Threads) != 1 || reread.Threads[0].ID != created.Threads[0].ID {
+		t.Errorf("re-reading the file lost the thread: %+v", reread.Threads)
+	}
+}
+
 func TestServesThePage(t *testing.T) {
 	s, _ := newTestServer(t)
 

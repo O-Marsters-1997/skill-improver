@@ -88,7 +88,12 @@ offset in `data-o`. Offsets are **bytes**, not characters — the browser conver
 for HTML, and the word means the same in both: they are held to a single invariant, that a
 run's text is exactly the source bytes at the offset it advertises.
 
-**Rev** — a stamp of a file's modification time and size. The page sends back the rev it
+**Format** — Markdown or HTML, decided once from the target's extension. It picks the
+renderer *and* the anchoring rules, because a code fence is Markdown's idea and backticks in
+an HTML file are ordinary text. An HTML target is rendered by tokenising and sanitised
+against an allowlist; see [ADR-0004](adr/0004-html-rendering.md).
+
+**Rev** — a stamp of the file's modification time and size. The page sends back the rev it
 last read; a mismatch means the file changed underneath it, so the write is refused with
 409 and the page reloads. This is what stops an edit made in the editor from being clobbered.
 A rev is **per file**, not per review: a review spanning several files carries one for each,
@@ -126,7 +131,7 @@ local record and is never handed off again.
 | Package | Holds |
 | --- | --- |
 | `internal/comments` | the mc format — parse, anchor, upsert, remove |
-| `internal/render` | Markdown and HTML → a page, with byte offsets on every run |
+| `internal/render` | Markdown or HTML → a page, with byte offsets on every run |
 | `internal/config` | the TOML file — fields, updater, defaults, validation |
 | `internal/skill` | the `name:` in a SKILL.md's frontmatter, and directory → SKILL.md |
 | `internal/handoff` | threads → payload (`Build`), and payload → disk (`Submit`) |

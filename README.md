@@ -43,11 +43,13 @@ just run
 ```
 
 ```
-reviewing /path/to/testdata/example-SKILL.md
+reviewing /path/to/testdata/example-skill
 serving   http://127.0.0.1:8420
 ```
 
-That serves the bundled fixture. To review a real skill — flags and the target both go
+That serves the bundled fixture — a whole skill directory, `SKILL.md` plus a couple of
+`references/` files, the way a real skill is laid out. To review a real skill — flags and
+the target both go
 through `just run`:
 
 ```
@@ -60,9 +62,9 @@ A directory target is walked recursively for `.md`, `.html` and `.htm` files, sk
 dotfiles, dot-directories, `node_modules` and the `--out` directory. The sidebar lists what
 it found, with a thread count against each file; click one to switch.
 
-Open `http://127.0.0.1:8420` and try the workflow below against the fixture — it's a
-`SKILL.md` with headings, a fenced code block, a table and a blockquote, built specifically
-to exercise the anchoring.
+Open `http://127.0.0.1:8420` and try the workflow below against the fixture — a `SKILL.md`
+with headings, lists and a blockquote, plus two `references/` files (a fenced code block,
+a table) it links out to, built specifically to exercise the anchoring across files.
 
 `just --list` shows every recipe.
 

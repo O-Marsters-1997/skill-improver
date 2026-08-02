@@ -4,7 +4,7 @@ default:
 # Serve a SKILL.md for review; everything passes through, flags either side of the path:
 #   just run --addr 127.0.0.1:9000 path/to/SKILL.md
 #   just run config init --local
-run *ARGS='testdata/example-SKILL.md':
+run *ARGS='testdata/example-skill':
     go run ./cmd/skill-review {{ARGS}}
 
 build:

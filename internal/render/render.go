@@ -18,6 +18,7 @@ import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
@@ -26,6 +27,7 @@ import (
 
 // markdown is immutable once built and safe for concurrent use.
 var markdown = goldmark.New(
+	goldmark.WithParser(mcParser()),
 	// GFM minus Linkify: autolinking splits text into a span per word, which bloats
 	// the HTML for no gain in a document whose links are already explicit.
 	goldmark.WithExtensions(extension.Table, extension.Strikethrough, extension.TaskList),
@@ -34,6 +36,46 @@ var markdown = goldmark.New(
 		renderer.WithNodeRenderers(util.Prioritized(&offsetRenderer{}, 100)),
 	),
 )
+
+// goldmark's own parser with one substitution, see markerAwareHTMLBlocks. Built by hand
+// rather than taken from goldmark.New's default because a default block parser can be
+// replaced but not removed.
+func mcParser() parser.Parser {
+	blocks := parser.DefaultBlockParsers()
+	for i, b := range blocks {
+		if b.Value == parser.NewHTMLBlockParser() {
+			blocks[i] = util.Prioritized(markerAwareHTMLBlocks{b.Value.(parser.BlockParser)}, b.Priority)
+		}
+	}
+	return parser.NewParser(
+		parser.WithBlockParsers(blocks...),
+		parser.WithInlineParsers(parser.DefaultInlineParsers()...),
+		parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...),
+	)
+}
+
+// CommonMark reads a line starting with "<!--" as an HTML block running to the "-->", so an
+// anchor marker in column 0 takes the prose after it into the block, where writeMarkup
+// renders every mc marker as nothing — paragraph and all. A marker with prose after it is a
+// paragraph, so this declines it: goldmark then falls through to the paragraph parser, and
+// the markers are picked up as inline RawHTML, which is where the highlight comes from.
+//
+// A marker alone on its line is still a real HTML block, which is what block-mode anchors
+// and the threads block rely on.
+type markerAwareHTMLBlocks struct{ parser.BlockParser }
+
+func (p markerAwareHTMLBlocks) Open(
+	parent ast.Node, reader text.Reader, pc parser.Context,
+) (ast.Node, parser.State) {
+	if line, _ := reader.PeekLine(); markedProseLine(line) {
+		return nil, parser.NoChildren
+	}
+	return p.BlockParser.Open(parent, reader, pc)
+}
+
+func markedProseLine(line []byte) bool {
+	return markerLineStart.Match(line) && len(bytes.TrimSpace(anyMarker.ReplaceAll(line, nil))) > 0
+}
 
 func HTML(src []byte) ([]byte, error) {
 	var buf bytes.Buffer
@@ -226,6 +268,10 @@ var (
 	// Submatch 1 is "/" on a closing marker and empty on an opening one; submatch 2 is the id.
 	markerPattern     = regexp.MustCompile(`^<!--mc:(/?)a:([a-z0-9]{1,12})-->$`)
 	bookkeepingPrefix = []byte("<!--mc:")
+	// Indented up to 3 spaces, because that is as far as CommonMark's HTML block start
+	// condition reaches.
+	markerLineStart = regexp.MustCompile(`^[ ]{0,3}<!--mc:`)
+	anyMarker       = regexp.MustCompile(`<!--mc:.*?-->`)
 )
 
 // Raw HTML that is not ours is escaped and shown, never executed.

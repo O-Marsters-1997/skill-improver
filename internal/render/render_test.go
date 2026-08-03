@@ -126,6 +126,28 @@ func TestHTML(t *testing.T) {
 			contains: []string{`<mark class="mc" data-id="k3f">`, "</mark>"},
 		},
 		{
+			// CommonMark would read the marker as opening an HTML block that runs to the
+			// "-->", which took the whole line — prose included — out of the document.
+			name: "an anchor opening a paragraph keeps the prose",
+			src:  "<!--mc:a:k3f-->Compact the *whole* thing<!--mc:/a:k3f--> and more\n",
+			contains: []string{
+				"<p>", `<mark class="mc" data-id="k3f">`,
+				`<span data-o="15">Compact the </span>`, `<em><span data-o="28">whole</span></em>`,
+				`<span data-o="56"> and more</span>`,
+			},
+			excludes: []string{`<div class="mc"`},
+		},
+		{
+			name:     "an anchor opening a list item keeps the prose",
+			src:      "- <!--mc:a:k3f-->item<!--mc:/a:k3f-->\n",
+			contains: []string{"<li>", `<mark class="mc" data-id="k3f">`, `<span data-o="17">item</span>`},
+		},
+		{
+			name:     "a closing marker opening a line keeps the prose",
+			src:      "one <!--mc:a:k3f-->two\n<!--mc:/a:k3f-->three\n",
+			contains: []string{`<span data-o="39">three</span>`},
+		},
+		{
 			name:     "block anchor wraps the whole element",
 			src:      "<!--mc:a:k3f-->\n" + fence + "\ncode\n" + fence + "\n<!--mc:/a:k3f-->\n",
 			contains: []string{`<div class="mc" data-id="k3f">`, "</div>"},
@@ -177,6 +199,7 @@ func FuzzOffsets(f *testing.F) {
 	f.Add(fence + "go\nx := 1\n" + fence + "\n")
 	f.Add("| a | b |\n| - | - |\n| c | d |\n")
 	f.Add("<!--mc:a:k3f-->text<!--mc:/a:k3f-->\n")
+	f.Add("<!--mc:a:k3f-->paragraph *start*\nsecond line<!--mc:/a:k3f-->\n\nnext\n")
 	f.Add("héllo wörld — em dash\n")
 
 	f.Fuzz(func(t *testing.T, src string) {

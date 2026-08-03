@@ -198,6 +198,25 @@ func TestAnchorWritesToDisk(t *testing.T) {
 	}
 }
 
+// Selecting from the very start of a paragraph puts the opening marker in column 0, which
+// CommonMark reads as an HTML block — and the renderer used to drop the whole line with it,
+// so commenting made the paragraph disappear.
+func TestAnchorAtTheStartOfAParagraphKeepsItRendered(t *testing.T) {
+	s, _ := newTestServer(t)
+	start, end := offsetOf(t, fixture, "Comments autosave")
+
+	d := decodeDoc(t, post(t, s, "/api/anchor", anchorRequest{
+		Rev: getDoc(t, s).Rev, Start: start, End: end, Quote: "Comments autosave", Body: "x",
+	}))
+
+	if !strings.Contains(d.HTML, "never push to a terminal") {
+		t.Errorf("the commented paragraph vanished from the re-render:\n%s", d.HTML)
+	}
+	if !strings.Contains(d.HTML, `class="mc" data-id="`+d.Threads[0].ID+`"`) {
+		t.Errorf("highlight missing from the re-render:\n%s", d.HTML)
+	}
+}
+
 func TestAnchorRejectsStaleRevision(t *testing.T) {
 	s, path := newTestServer(t)
 	start, end := offsetOf(t, fixture, "never push")

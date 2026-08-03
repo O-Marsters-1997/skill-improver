@@ -152,11 +152,13 @@ var (
 	ownLineMarker = regexp.MustCompile(`(?m)^<!--mc:/?a:[a-z0-9]{1,12}-->\n`)
 )
 
-// A document with no threads block is not an error, it simply has no comments.
+// A document with no threads block is not an error, it simply has no comments. Empty and
+// never nil, because this slice is marshalled straight to the browser and a JSON null
+// there is a different type from the array the UI is written against.
 func Threads(src []byte) ([]Thread, error) {
 	block, _, _, ok := threadsBlock(src)
 	if !ok {
-		return nil, nil
+		return []Thread{}, nil
 	}
 
 	matches := threadPattern.FindAllSubmatch(block, -1)

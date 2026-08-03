@@ -402,6 +402,112 @@ func TestClear(t *testing.T) {
 	})
 }
 
+func TestReplace(t *testing.T) {
+	anchored := "The <!--mc:a:k3f-->lazy fix<!--mc:/a:k3f--> is the root cause.\n\n" +
+		threadsBegin + "\n" +
+		`<!--mc:t {"id":"k3f","quote":"lazy fix","status":"open","comments":[]}-->` + "\n" +
+		threadsEnd + "\n"
+
+	t.Run("replaces a span of prose", func(t *testing.T) {
+		src := "The lazy fix is the root cause.\n"
+		start, end := offsetOf(t, src, "root cause")
+		got, err := Replace([]byte(src), start, end, []byte("root-cause fix"))
+		if err != nil {
+			t.Fatalf("Replace: %v", err)
+		}
+		if want := "The lazy fix is the root-cause fix.\n"; string(got) != want {
+			t.Errorf("got %q; want %q", got, want)
+		}
+	})
+
+	t.Run("an edit that keeps the markers leaves the thread anchored", func(t *testing.T) {
+		start, end := offsetOf(t, anchored, "<!--mc:a:k3f-->lazy fix<!--mc:/a:k3f--> is")
+		got, err := Replace([]byte(anchored), start, end,
+			[]byte("<!--mc:a:k3f-->lazy fix<!--mc:/a:k3f--> was"))
+		if err != nil {
+			t.Fatalf("Replace: %v", err)
+		}
+		if !strings.Contains(string(got), "lazy fix<!--mc:/a:k3f--> was") {
+			t.Errorf("edit not applied:\n%s", got)
+		}
+		threads, err := Threads(got)
+		if err != nil || len(threads) != 1 {
+			t.Fatalf("threads after Replace: %+v, err %v", threads, err)
+		}
+	})
+
+	t.Run("insertion is a replacement of nothing", func(t *testing.T) {
+		src := "The fix.\n"
+		start, _ := offsetOf(t, src, "fix")
+		got, err := Replace([]byte(src), start, start, []byte("lazy "))
+		if err != nil {
+			t.Fatalf("Replace: %v", err)
+		}
+		if want := "The lazy fix.\n"; string(got) != want {
+			t.Errorf("got %q; want %q", got, want)
+		}
+	})
+
+	refused := []struct {
+		name       string
+		src        string
+		span       string
+		text       string
+		start, end int
+		want       error
+	}{
+		{
+			name: "dropping an anchor marker",
+			src:  anchored,
+			span: "<!--mc:a:k3f-->lazy fix<!--mc:/a:k3f-->",
+			text: "lazy fix",
+			want: ErrMarkers,
+		},
+		{
+			name: "dropping only the closing marker",
+			src:  anchored,
+			span: "lazy fix<!--mc:/a:k3f-->",
+			text: "lazy fix",
+			want: ErrMarkers,
+		},
+		{
+			name: "typing a thread line into the prose",
+			src:  "The lazy fix.\n",
+			span: "lazy",
+			text: `lazy <!--mc:t {"id":"fake","quote":"x","status":"open","comments":[]}-->`,
+			want: ErrMarkers,
+		},
+		{
+			name: "an offset landing inside a marker",
+			src:  anchored,
+			span: "mc:a:k3f-->lazy fix",
+			text: "whatever",
+			want: ErrMarkers,
+		},
+		{
+			name: "reordering an anchor's own markers",
+			src:  anchored,
+			span: "<!--mc:a:k3f-->lazy fix<!--mc:/a:k3f-->",
+			text: "<!--mc:/a:k3f-->lazy fix<!--mc:a:k3f-->",
+			want: ErrMarkers,
+		},
+		{name: "stop past the end", src: "short\n", start: 0, end: 99, want: ErrRange},
+		{name: "negative start", src: "short\n", start: -1, end: 2, want: ErrRange},
+		{name: "start after stop", src: "short\n", start: 4, end: 2, want: ErrRange},
+	}
+	for _, tc := range refused {
+		t.Run("refuses "+tc.name, func(t *testing.T) {
+			start, end := tc.start, tc.end
+			if tc.span != "" {
+				start, end = offsetOf(t, tc.src, tc.span)
+			}
+			if _, err := Replace([]byte(tc.src), start, end, []byte(tc.text)); !errors.Is(err, tc.want) {
+				t.Errorf("err = %v; want %v", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestNewID(t *testing.T) {
 	seen := make(map[string]bool, 1000)
 	for range 1000 {

@@ -145,18 +145,26 @@ func Submit(cfg *config.Config, outDir, skillPath string, docs []Doc) (Result, e
 	return Result{File: file, Prompt: prompt, Changed: changed, Payload: payload, Submitted: submitted}, nil
 }
 
-// A document counts as instructions only when every reviewed file resolves inside the
-// skill. Symlinks are resolved on both sides first: ~/.claude/skills is largely a symlink
+// ModeOf reports whether a document is the skill's own instructions or something it
+// produced. Symlinks are resolved on both sides first: ~/.claude/skills is largely a symlink
 // farm into ~/.agents/skills, and without that step every real skill reads as output.
 //
 // The skill's directory is taken from the resolved SKILL.md rather than resolved as a
 // directory, because either half of the pair can be the link — the farm holds directory
 // symlinks in some installs and file symlinks in others.
-func deriveMode(skillMD string, docs []Doc) string {
+func ModeOf(skillMD, docPath string) string {
 	skillDir := filepath.Dir(resolveLinks(skillMD))
+	rel, err := filepath.Rel(skillDir, resolveLinks(docPath))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ModeOutput
+	}
+	return ModeInstructions
+}
+
+// The payload's mode describes the whole review, so one output document settles it.
+func deriveMode(skillMD string, docs []Doc) string {
 	for _, d := range docs {
-		rel, err := filepath.Rel(skillDir, resolveLinks(d.Path))
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if ModeOf(skillMD, d.Path) == ModeOutput {
 			return ModeOutput
 		}
 	}

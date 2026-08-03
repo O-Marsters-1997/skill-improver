@@ -5,11 +5,13 @@ import { Toaster } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { hiddenFileNames } from "@/lib/files";
 import { run, say } from "@/lib/notify";
+import { sliceBytes } from "@/lib/offsets";
 import type { FileEntry, Filter, HandoffResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useDoc } from "@/hooks/useDoc";
 import { useFilePath } from "@/hooks/useFilePath";
 import { useSelection } from "@/hooks/useSelection";
+import { BlockEditor } from "./BlockEditor";
 import { Composer } from "./Composer";
 import { Document } from "./Document";
 import { FileExplorer } from "./FileExplorer";
@@ -37,9 +39,12 @@ export default function App() {
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [showFrontmatter, setShowFrontmatter] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
+  // The draft lives here rather than in BlockEditor so a rejected save keeps the typing:
+  // the response redraws the document and remounts everything below it.
+  const [editing, setEditing] = useState<{ start: number; end: number; text: string } | null>(null);
 
   const docContainerRef = useRef<HTMLDivElement>(null);
-  const { pending, anchorRect, composerOpen, menuRef, openComposer, closeComposer } =
+  const { pending, block, anchorRect, composerOpen, menuRef, openComposer, closeComposer } =
     useSelection(docContainerRef);
 
   // Returns the fetched array too, not just via setFiles — a caller that awaits it and
@@ -58,8 +63,10 @@ export default function App() {
 
   // A thread id belongs to one file, so carrying the selection across a file switch would
   // highlight nothing and leave the composer pointing at a range that no longer exists.
+  // Offsets are per file too, so an open editor would splice into the wrong document.
   useEffect(() => {
     setSelectedId(null);
+    setEditing(null);
     closeComposer();
   }, [doc?.rel, closeComposer]);
 
@@ -87,6 +94,24 @@ export default function App() {
       closeComposer();
       window.getSelection()?.removeAllRanges();
       say("Comment saved to the file.");
+    });
+  }
+
+  // From the source the server sent, not the DOM: the rendered text has lost the marks and
+  // markers the splice has to put back byte for byte.
+  function startEdit() {
+    if (!doc || !block) return;
+    setEditing({ ...block, text: sliceBytes(doc.src, block.start, block.end) });
+    closeComposer();
+    window.getSelection()?.removeAllRanges();
+  }
+
+  async function handleSaveEdit() {
+    if (!editing) return;
+    await run(async () => {
+      await mutate("/api/edit", { start: editing.start, end: editing.end, text: editing.text });
+      setEditing(null);
+      say("Edit saved to the file.");
     });
   }
 
@@ -234,6 +259,17 @@ export default function App() {
                 setCommentsOpen(true);
                 setSelectedId(id);
               }}
+              editingAt={editing?.start ?? null}
+              editor={
+                editing && (
+                  <BlockEditor
+                    text={editing.text}
+                    onChange={(text) => setEditing({ ...editing, text })}
+                    onCancel={() => setEditing(null)}
+                    onSave={handleSaveEdit}
+                  />
+                )
+              }
             />
           </div>
         </div>
@@ -274,6 +310,7 @@ export default function App() {
           setCommentsOpen(true);
           openComposer();
         }}
+        onEdit={doc?.editable && block ? startEdit : null}
       />
 
       {quickOpen && (

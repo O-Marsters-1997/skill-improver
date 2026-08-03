@@ -4,16 +4,34 @@
 // comments silently anchor to the wrong passage in the user's SKILL.md.
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 export function byteLength(text: string): number {
   return encoder.encode(text).length;
 }
 
+// Offsets are UTF-8 byte positions and a JS string index is UTF-16, so the slice has to be
+// taken in the encoded form.
+export function sliceBytes(src: string, start: number, end: number): string {
+  return decoder.decode(encoder.encode(src).subarray(start, end));
+}
+
+function elementOf(node: Node): Element | null {
+  return node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element);
+}
+
+// The byte range an in-place edit may replace. Null where the renderer stamped no bounds,
+// such as a table cell, which is where editing is not offered.
+export function blockAt(node: Node): { start: number; end: number } | null {
+  const block = elementOf(node)?.closest<HTMLElement>("[data-os]");
+  if (!block) return null;
+  return { start: Number(block.dataset.os), end: Number(block.dataset.oe) };
+}
+
 // Every text run the server rendered carries the byte offset it started at, so an offset
 // is that number plus the bytes of rendered text preceding the caret.
 export function offsetAt(node: Node, offset: number): number | null {
-  const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element);
-  const span = element?.closest("[data-o]");
+  const span = elementOf(node)?.closest("[data-o]");
   if (!span) return null;
   const range = document.createRange();
   range.setStart(span, 0);

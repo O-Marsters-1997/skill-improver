@@ -37,12 +37,18 @@ threads from the document. The CLI is deliberately read-only: it is the backstop
 browser is not an option, and a backstop that could silently consume a comment on a bad run
 would be worse than none.
 
-Two non-goals, both deliberate, and the second is narrower than it first sounds. There is
-no editor — you review, Claude writes, so a rendered view you can highlight is the whole
-requirement. And there is no eval **harness**: no test sets, no judges, no pass rates, no
-scores. That is not the same as no *evaluation*. Reviewing a document a skill produced is
-evaluation, and it is squarely in scope — what stays out is the machinery, not the
-judgement.
+Reviewing has two verbs, and the difference between them is who does the work. A **comment**
+is a judgement handed to the updater, which is the right weight for "this instruction is
+wrong" and far too much ceremony for a typo. An **edit** is the reviewer changing the text
+themselves, in place, saved to the file on the spot. Editing is deliberately the smaller of
+the two: it reaches prose blocks in the skill's own instructions and nothing else, because an
+edit to a document the skill *produced* improves an artifact that gets thrown away while the
+skill that wrote it stays exactly as wrong as it was. Anything that is a judgement still
+travels as a comment. See [ADR-0006](adr/0006-in-place-editing.md).
+
+There is still no eval **harness**: no test sets, no judges, no pass rates, no scores. That
+is not the same as no *evaluation*. Reviewing a document a skill produced is evaluation, and
+it is squarely in scope — what stays out is the machinery, not the judgement.
 
 One smaller choice is worth recording here rather than in an ADR. Listing the skills on
 this machine is a native Go glob over the skill directories, not a shell-out to
@@ -66,7 +72,10 @@ instructions. They part company when the target is something the skill produced.
 `output` when it does not. **Derived from the two paths, never declared.** Resolved, not
 merely prefixed: the skill directories are largely a symlink farm, so a plain path comparison
 would call every real skill `output`. There is no flag for it either, because a flag is a
-second source of truth and the two would eventually disagree.
+second source of truth and the two would eventually disagree. Mode is a property of **one
+file**, and two things read it at different grains: whether that file may be edited is its own
+answer, while the mode on a payload describes the whole review and so is `output` if any file
+in it is. One derivation serves both, because two would drift.
 
 **Anchor** — a passage of the document a thread is attached to. Written as a **marker**
 pair in the source: `<!--mc:a:ID-->the passage<!--mc:/a:ID-->`. Because the markers live in
@@ -90,6 +99,15 @@ offset in `data-o`. Offsets are **bytes**, not characters — the browser conver
 `TextEncoder` before sending them. Two renderers emit runs, one for Markdown targets and one
 for HTML, and the word means the same in both: they are held to a single invariant, that a
 run's text is exactly the source bytes at the offset it advertises.
+
+**Block** — the unit an **edit** replaces: one paragraph, heading, list item, code-fence body,
+or the frontmatter, carrying the byte range the renderer stamped on it. Not the same as a
+**run**, and the two answer different questions: a run is as much text as the renderer emitted
+in one go and exists so a *selection* can be located, while a block is a whole element and
+exists so an *edit* has something to splice. A block's range starts **inside** its own syntax —
+the text of a heading, not the `##` in front of it — which is why an edit can change what a
+block says but never what kind of block it is. Where no range was stamped, there is nothing to
+edit: a table cell is read-only, and so is any file that is not Markdown instructions.
 
 **Format** — Markdown or HTML, decided once from the target's extension. It picks the
 renderer *and* the anchoring rules, because a code fence is Markdown's idea and backticks in
@@ -142,7 +160,7 @@ none of them to pending.json first.
 | Package | Holds |
 | --- | --- |
 | `internal/comments` | the mc format — parse, anchor, upsert, remove |
-| `internal/render` | Markdown or HTML → a page, with byte offsets on every run |
+| `internal/render` | Markdown or HTML → a page, with byte offsets on every run and bounds on every editable block |
 | `internal/config` | the TOML file — fields, updater, defaults, validation |
 | `internal/skill` | the `name:` in a SKILL.md's frontmatter, and directory → SKILL.md |
 | `internal/handoff` | threads → payload (`Build`), and payload → disk (`Submit`) |
@@ -150,10 +168,13 @@ none of them to pending.json first.
 | `web/` | the page itself: a Vite/React SPA built into `internal/server/web` and embedded |
 
 `web/` is one screen — `features/review/` — over three panes: the file explorer, the document,
-and the thread list. It holds no state the server does not: `useDoc` refetches on every
-mutation and redraws from the response, so there is nothing to cache or invalidate. The two
-things it does own are the filter (client-only, and deliberately never sent — the count Submit
-reports has to stay the server's) and which folders are expanded.
+and the thread list. It caches nothing the server owns: `useDoc` refetches on every mutation
+and redraws from the response, so there is nothing to invalidate. What it does own is the
+filter (client-only, and deliberately never sent — the count Submit reports has to stay the
+server's), which folders are expanded, and the text of an **edit** still being typed. That
+last one is state by necessity rather than choice: it is not yet in the file, and a refused
+save redraws the document out from under the editor, so the draft has to outlive the component
+that shows it.
 
 **The URL is the file.** `/references/theming.md` reviews that path; `/` means the server's
 first. Routing is `history.pushState` and one hook, not a router, and deep links work because

@@ -78,14 +78,29 @@ a table) it links out to, built specifically to exercise the anchoring across fi
 
 ## Using the UI
 
-1. **Select text** in the rendered document. A small **💬 Comment** action appears next to
-   the selection — selecting is never hijacked, so you can read, copy and re-select freely.
-   Click the action (or press Escape / click away to dismiss it) to open a composer anchored
-   to that passage.
+1. **Select text** in the rendered document. A small toolbar appears next to the selection
+   with **💬 Comment** and, where editing is allowed, **✎ Edit** — selecting is never
+   hijacked, so you can read, copy and re-select freely. Press Escape or click away to
+   dismiss it.
 2. **Comment** — write the body and save. That's the whole form: triage is a comparative
    judgement, so it happens later, in the sidebar, once there is something to compare
    against. Save writes the comment into the file immediately.
-3. Each comment becomes a **thread** in the sidebar, anchored to its highlighted passage in
+3. **Edit** — for the small things not worth a comment. The block you selected inside (a
+   paragraph, heading, list item, code-fence body, or the frontmatter) becomes a text box
+   holding its **Markdown source**, in place. `⌘↵`/`Ctrl+↵` or **Save** writes it to the file;
+   Escape cancels; clicking away does nothing. You are editing source, so the `**bold**`
+   marks are there to keep, and so is the `##` in a heading — except the block's own syntax
+   sits outside the editable range, so an edit can't accidentally change a heading's level or
+   lose a bullet.
+
+   Editing is offered only for **Markdown files that are the skill's own instructions**. A
+   document the skill merely *produced* is comment-only: editing it would fix an artifact and
+   leave the skill that wrote it unchanged. HTML targets are comment-only too.
+
+   If the block carries a comment, its anchor markers are visible in the source and have to
+   stay. An edit that would delete one is refused rather than silently orphaning the thread —
+   resolve or delete the comment first.
+4. Each comment becomes a **thread** in the sidebar, anchored to its highlighted passage in
    the document. From a thread card you can:
    - **Reply** — add another comment to the same thread.
    - **Resolve / Reopen** — toggle status; resolved threads are excluded from the handoff.
@@ -93,7 +108,7 @@ a table) it links out to, built specifically to exercise the anchoring across fi
    - Set the **fields** — the triage step, with every other thread in view. One control per
      configured field; by default that is Priority and Category, defaulting to
      `medium`/`instructions`. See [Configuration](#configuration).
-4. **Submit this file** (top right, named after your updater skill when one is configured)
+5. **Submit this file** (top right, named after your updater skill when one is configured)
    collects every open thread in the file you're viewing that hasn't already been handed off
    into `.skill-review/pending.json`, **removes those threads from the document** so they
    can't be handed off a second time, and shows the prompt in a panel that stays until you
@@ -102,7 +117,7 @@ a table) it links out to, built specifically to exercise the anchoring across fi
    Nothing is pushed anywhere, so clicking it twice is harmless: the second click reports that
    nothing is new. Paste the prompt to Claude, and **run the `mv` it gives you** once the
    suggestions are applied — see [The handoff step](#the-handoff-step).
-5. **Discard all comments** (above the thread list) removes every comment on the current
+6. **Discard all comments** (above the thread list) removes every comment on the current
    file — open, resolved, everything — without submitting any of it. Confirm the prompt;
    there's no undo.
 

@@ -36,6 +36,10 @@ export interface Doc {
   path: string;
   rev: string;
   html: string;
+  // The source html was rendered from; an in-place edit replaces a byte range of it.
+  src: string;
+  // Decided by the server, so the page and the write path cannot disagree.
+  editable: boolean;
   threads: Thread[];
   fields: Field[];
   updater: string;

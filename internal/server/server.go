@@ -38,6 +38,7 @@ var webFS embed.FS
 type Server struct {
 	target    string   // the file or directory named on the command line, absolute
 	skill     string   // what the payload edits: the same path unless --skill said otherwise
+	skillMD   string   // skill resolved to its SKILL.md, for the per-file mode check
 	root      string   // the directory the review set is relative to
 	files     []string // the review set, relative to root, sorted
 	outDir    string
@@ -67,6 +68,12 @@ func renderDoc(path string, src []byte) ([]byte, error) {
 	return render.HTML(src)
 }
 
+// Editing in place is limited to the skill's own Markdown instructions; the reasoning is in
+// docs/adr/0006-in-place-editing.md.
+func (s *Server) editable(path string) bool {
+	return formatOf(path) == comments.Markdown && handoff.ModeOf(s.skillMD, path) == handoff.ModeInstructions
+}
+
 func New(cfg *config.Config, target, skillPath, outDir, author string) (*Server, error) {
 	absolute, err := filepath.Abs(target)
 	if err != nil {
@@ -90,8 +97,15 @@ func New(cfg *config.Config, target, skillPath, outDir, author string) (*Server,
 		return nil, err
 	}
 
+	// Resolved once: the skill is fixed for the process, and editable would otherwise walk
+	// symlinks on every request.
+	skillMD, err := skill.Resolve(absoluteSkill)
+	if err != nil {
+		return nil, err
+	}
+
 	s := &Server{
-		target: absolute, skill: absoluteSkill, root: root, files: files,
+		target: absolute, skill: absoluteSkill, skillMD: skillMD, root: root, files: files,
 		outDir: out, author: author, cfg: cfg, mux: http.NewServeMux(), newID: comments.NewID,
 	}
 
@@ -103,6 +117,7 @@ func New(cfg *config.Config, target, skillPath, outDir, author string) (*Server,
 	s.mux.HandleFunc("GET /api/files", s.handleFiles)
 	s.mux.HandleFunc("GET /api/doc", s.handleDoc)
 	s.mux.HandleFunc("POST /api/anchor", s.handleAnchor)
+	s.mux.HandleFunc("POST /api/edit", s.handleEdit)
 	s.mux.HandleFunc("POST /api/thread", s.handleThread)
 	s.mux.HandleFunc("POST /api/thread/delete", s.handleThreadDelete)
 	s.mux.HandleFunc("POST /api/handoff", s.handleHandoff)
@@ -223,17 +238,22 @@ func (s *Server) at(rel string) (string, string, error) {
 	return rel, filepath.Join(s.root, filepath.FromSlash(rel)), nil
 }
 
-// Fields and Updater are served rather than baked into the page, so the browser cannot
-// drift from the schema the payload is built against.
+// Fields, Updater and Editable are served rather than baked into the page, so the browser
+// cannot drift from the schema the payload is built against or from the rule the write path
+// enforces.
 type doc struct {
-	Name    string            `json:"name"`
-	Rel     string            `json:"rel"`
-	Path    string            `json:"path"`
-	Rev     string            `json:"rev"`
-	HTML    string            `json:"html"`
-	Threads []comments.Thread `json:"threads"`
-	Fields  []config.Field    `json:"fields"`
-	Updater string            `json:"updater"`
+	Name string `json:"name"`
+	Rel  string `json:"rel"`
+	Path string `json:"path"`
+	Rev  string `json:"rev"`
+	HTML string `json:"html"`
+	// Src is what an in-place edit splices: the rendered HTML has lost the Markdown the
+	// replaced bytes have to preserve.
+	Src      string            `json:"src"`
+	Editable bool              `json:"editable"`
+	Threads  []comments.Thread `json:"threads"`
+	Fields   []config.Field    `json:"fields"`
+	Updater  string            `json:"updater"`
 }
 
 // One row of the explorer. Threads counts what Build would turn into suggestions rather
@@ -319,6 +339,31 @@ func (s *Server) handleAnchor(w http.ResponseWriter, r *http.Request) {
 			Status:   "open",
 			Comments: []comments.Comment{s.newComment("c1", "", req.Body)},
 		})
+	})
+}
+
+type editRequest struct {
+	File  string `json:"file"`
+	Rev   string `json:"rev"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+	Text  string `json:"text"`
+}
+
+// The gate is re-checked here rather than trusted from the editable flag the page was
+// handed: this route takes arbitrary bytes into a file whose markers hold the review
+// together.
+func (s *Server) handleEdit(w http.ResponseWriter, r *http.Request) {
+	req, ok := decode[editRequest](w, r)
+	if !ok {
+		return
+	}
+
+	s.mutate(w, req.File, req.Rev, func(path string, src []byte) ([]byte, error) {
+		if !s.editable(path) {
+			return nil, fmt.Errorf("server: %q is not editable: %w", req.File, errBadRequest)
+		}
+		return comments.Replace(src, req.Start, req.End, []byte(req.Text))
 	})
 }
 
@@ -525,14 +570,16 @@ func (s *Server) respond(w http.ResponseWriter, rel, path string, src []byte, re
 	writeJSON(w, http.StatusOK, doc{
 		// The heading names the skill, not the file being read: a directory review has
 		// many documents and only one of them carries the frontmatter.
-		Name:    skill.NameAt(s.skill),
-		Rel:     rel,
-		Path:    path,
-		Rev:     rev,
-		HTML:    string(html),
-		Threads: threads,
-		Fields:  s.cfg.Fields,
-		Updater: s.cfg.Updater.Name,
+		Name:     skill.NameAt(s.skill),
+		Rel:      rel,
+		Path:     path,
+		Rev:      rev,
+		HTML:     string(html),
+		Src:      string(src),
+		Editable: s.editable(path),
+		Threads:  threads,
+		Fields:   s.cfg.Fields,
+		Updater:  s.cfg.Updater.Name,
 	})
 }
 
@@ -632,7 +679,7 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, comments.ErrRange), errors.Is(err, comments.ErrOverlap),
 		errors.Is(err, comments.ErrInThreads), errors.Is(err, comments.ErrBadID),
-		errors.Is(err, comments.ErrDuplicateID):
+		errors.Is(err, comments.ErrDuplicateID), errors.Is(err, comments.ErrMarkers):
 		status = http.StatusUnprocessableEntity
 	}
 	writeJSON(w, status, map[string]string{"error": err.Error()})

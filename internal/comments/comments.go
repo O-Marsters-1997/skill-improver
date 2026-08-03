@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"regexp"
+	"slices"
 	"strconv"
 )
 
@@ -34,6 +35,8 @@ var (
 	ErrInThreads   = errors.New("comments: span overlaps the threads block")
 	ErrOverlap     = errors.New("comments: span partially overlaps an existing anchor")
 	ErrNotFound    = errors.New("comments: thread not found")
+	// Unprefixed, unlike its neighbours: the page shows this one to the reviewer verbatim.
+	ErrMarkers = errors.New("that edit would remove a comment's anchor — delete or resolve the comment first")
 )
 
 // Field order matches the mc spec so the serialised line stays diff-stable.
@@ -150,6 +153,8 @@ var (
 	// Block-mode markers sit on a line of their own; taking the line with them keeps
 	// the fence they wrapped from being left floating in a blank.
 	ownLineMarker = regexp.MustCompile(`(?m)^<!--mc:/?a:[a-z0-9]{1,12}-->\n`)
+	// Wider than markerPattern: Replace holds thread lines still as well as anchors.
+	anyMarker = regexp.MustCompile(`<!--mc:.*?-->`)
 )
 
 // A document with no threads block is not an error, it simply has no comments. Empty and
@@ -269,6 +274,22 @@ func Clear(src []byte) []byte {
 	out = ownLineMarker.ReplaceAll(out, nil)
 	out = markerPattern.ReplaceAll(out, nil)
 	return append(bytes.TrimRight(out, "\n"), '\n')
+}
+
+// Replace swaps src[start:stop] for text, refusing any edit that changes the document's
+// markers: they are the anchors, so dropping one orphans a thread and typing one in forges
+// a comment. See docs/adr/0006-in-place-editing.md.
+func Replace(src []byte, start, stop int, text []byte) ([]byte, error) {
+	if start < 0 || stop > len(src) || start > stop {
+		return nil, ErrRange
+	}
+	out := splice(src, start, stop, string(text))
+	// Whole document, so an offset landing inside a marker is caught too; sequence rather
+	// than set, so swapping an anchor's open and close markers is not mistaken for a match.
+	if !slices.EqualFunc(anyMarker.FindAll(src, -1), anyMarker.FindAll(out, -1), bytes.Equal) {
+		return nil, ErrMarkers
+	}
+	return out, nil
 }
 
 func NewID() string {

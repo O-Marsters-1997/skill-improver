@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,7 +17,10 @@ var update = flag.Bool("update", false, "update golden files")
 
 const fence = "```"
 
-var spanPattern = regexp.MustCompile(`(?s)<span data-o="(\d+)">(.*?)</span>`)
+var (
+	spanPattern   = regexp.MustCompile(`(?s)<span data-o="(\d+)">(.*?)</span>`)
+	boundsPattern = regexp.MustCompile(`data-os="(\d+)" data-oe="(\d+)"`)
+)
 
 // assertOffsets is the property the whole tool rests on: every span's text is
 // exactly the source bytes starting at the offset it advertises.
@@ -34,6 +38,25 @@ func assertOffsets(t *testing.T, src, out []byte) {
 		}
 		if got := string(src[offset : offset+len(want)]); got != want {
 			t.Errorf("span at %d renders %q; source has %q", offset, want, got)
+		}
+	}
+}
+
+// An edit splices these bounds, so a range that runs backwards or past the end of the
+// source corrupts the file rather than merely mis-highlighting it.
+func assertBounds(t *testing.T, src, out []byte) {
+	t.Helper()
+	for _, m := range boundsPattern.FindAllSubmatch(out, -1) {
+		start, err := strconv.Atoi(string(m[1]))
+		if err != nil {
+			t.Fatalf("unparseable start %q", m[1])
+		}
+		stop, err := strconv.Atoi(string(m[2]))
+		if err != nil {
+			t.Fatalf("unparseable stop %q", m[2])
+		}
+		if start < 0 || start > stop || stop > len(src) {
+			t.Errorf("bounds [%d,%d) outside a %d-byte source", start, stop, len(src))
 		}
 	}
 }
@@ -83,7 +106,7 @@ func TestHTML(t *testing.T) {
 		{
 			name:     "plain paragraph is one unbroken run",
 			src:      "Hello world\n",
-			contains: []string{`<p><span data-o="0">Hello world</span></p>`},
+			contains: []string{`<p data-os="0" data-oe="11"><span data-o="0">Hello world</span></p>`},
 		},
 		{
 			name:     "emphasis splits into separate runs",
@@ -93,7 +116,7 @@ func TestHTML(t *testing.T) {
 		{
 			name:     "heading",
 			src:      "# Title\n",
-			contains: []string{`<h1><span data-o="2">Title</span></h1>`},
+			contains: []string{`<h1 data-os="2" data-oe="7"><span data-o="2">Title</span></h1>`},
 		},
 		{
 			name:     "code span",
@@ -103,7 +126,7 @@ func TestHTML(t *testing.T) {
 		{
 			name:     "fenced block stamps every line",
 			src:      "before\n\n" + fence + "go\nfmt.Println(1)\nreturn\n" + fence + "\n",
-			contains: []string{`<pre><code class="language-go">`, `<span data-o="14">fmt.Println(1)`},
+			contains: []string{`<pre data-os="14" data-oe="36"><code class="language-go">`, `<span data-o="14">fmt.Println(1)`},
 		},
 		{
 			name:     "table cells",
@@ -131,7 +154,7 @@ func TestHTML(t *testing.T) {
 			name: "an anchor opening a paragraph keeps the prose",
 			src:  "<!--mc:a:k3f-->Compact the *whole* thing<!--mc:/a:k3f--> and more\n",
 			contains: []string{
-				"<p>", `<mark class="mc" data-id="k3f">`,
+				"<p data-os=", `<mark class="mc" data-id="k3f">`,
 				`<span data-o="15">Compact the </span>`, `<em><span data-o="28">whole</span></em>`,
 				`<span data-o="56"> and more</span>`,
 			},
@@ -140,7 +163,7 @@ func TestHTML(t *testing.T) {
 		{
 			name:     "an anchor opening a list item keeps the prose",
 			src:      "- <!--mc:a:k3f-->item<!--mc:/a:k3f-->\n",
-			contains: []string{"<li>", `<mark class="mc" data-id="k3f">`, `<span data-o="17">item</span>`},
+			contains: []string{"<li data-os=", `<mark class="mc" data-id="k3f">`, `<span data-o="17">item</span>`},
 		},
 		{
 			name:     "a closing marker opening a line keeps the prose",
@@ -153,9 +176,12 @@ func TestHTML(t *testing.T) {
 			contains: []string{`<div class="mc" data-id="k3f">`, "</div>"},
 		},
 		{
-			name:     "frontmatter is a block of its own, not a rule and a heading",
-			src:      "---\nname: thing\n---\n\n# Title\n",
-			contains: []string{`<div class="frontmatter"><pre><span data-o="0">---`, `<h1><span data-o="23">Title</span></h1>`},
+			name: "frontmatter is a block of its own, not a rule and a heading",
+			src:  "---\nname: thing\n---\n\n# Title\n",
+			contains: []string{
+				`<div class="frontmatter" data-os="4" data-oe="15"><pre><span data-o="0">---`,
+				`<h1 data-os="23" data-oe="28"><span data-o="23">Title</span></h1>`,
+			},
 			excludes: []string{"<hr>"},
 		},
 		{
@@ -192,6 +218,75 @@ func TestHTMLGolden(t *testing.T) {
 	assertGolden(t, got, "example-SKILL.html")
 }
 
+// What matters is the source the bounds point at: inside the block's own syntax, never
+// across it.
+func TestBlockBounds(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{
+			name: "a heading's range is the text, not the hashes",
+			src:  "## A heading\n",
+			want: []string{"A heading"},
+		},
+		{
+			name: "a tight list item's range is the text, not the bullet",
+			src:  "- first\n- second\n",
+			want: []string{"first", "second"},
+		},
+		{
+			name: "a nested list is not part of its parent item",
+			src:  "- outer\n  - inner\n",
+			want: []string{"outer", "inner"},
+		},
+		{
+			name: "a fenced block's range is the body, not the fences",
+			src:  fence + "go\nx := 1\n" + fence + "\n",
+			want: []string{"x := 1\n"},
+		},
+		{
+			name: "frontmatter's range is the yaml, not the delimiters",
+			src:  "---\nname: thing\n---\n\nprose\n",
+			want: []string{"name: thing", "prose"},
+		},
+		{
+			name: "a paragraph's range keeps its inline syntax",
+			src:  "the **lazy** fix\n",
+			want: []string{"the **lazy** fix"},
+		},
+		{
+			name: "a multi-line paragraph runs to the last line",
+			src:  "first line\nsecond line\n",
+			want: []string{"first line\nsecond line"},
+		},
+		{
+			name: "an anchored paragraph keeps its markers in range",
+			src:  "a <!--mc:a:k3f-->b<!--mc:/a:k3f--> c\n",
+			want: []string{"a <!--mc:a:k3f-->b<!--mc:/a:k3f--> c"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := HTML([]byte(tt.src))
+			if err != nil {
+				t.Fatalf("HTML: %v", err)
+			}
+			var got []string
+			for _, m := range boundsPattern.FindAllSubmatch(out, -1) {
+				start, _ := strconv.Atoi(string(m[1]))
+				stop, _ := strconv.Atoi(string(m[2]))
+				got = append(got, tt.src[start:stop])
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("bounds cover %q; want %q\nrendered:\n%s", got, tt.want, out)
+			}
+		})
+	}
+}
+
 func FuzzOffsets(f *testing.F) {
 	f.Add("# Title\n\ntext with **bold** and `code`\n")
 	f.Add("- a\n- b\n\n> quote\n")
@@ -214,5 +309,6 @@ func FuzzOffsets(f *testing.F) {
 			t.Fatalf("HTML: %v", err)
 		}
 		assertOffsets(t, []byte(src), out)
+		assertBounds(t, []byte(src), out)
 	})
 }

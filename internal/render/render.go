@@ -82,7 +82,10 @@ func HTML(src []byte) ([]byte, error) {
 
 	body := src
 	if end := frontmatterEnd(src); end > 0 {
-		fmt.Fprintf(&buf, `<div class="frontmatter"><pre><span data-o="0">%s</span></pre></div>`+"\n",
+		// Bounds exclude the --- lines, so an edit cannot stop this being frontmatter.
+		fmt.Fprintf(&buf,
+			`<div class="frontmatter" data-os="%d" data-oe="%d"><pre><span data-o="0">%s</span></pre></div>`+"\n",
+			len(frontmatterDelimiter), end-len("\n"+frontmatterDelimiter),
 			stdhtml.EscapeString(string(src[:end])))
 		// Blanking the frontmatter rather than slicing it off keeps every later
 		// offset absolute, which is the whole contract with the browser.
@@ -95,18 +98,19 @@ func HTML(src []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+const frontmatterDelimiter = "---\n"
+
 // Frontmatter is found so it can be handled separately: CommonMark would otherwise
 // render it as a horizontal rule followed by a heading.
 func frontmatterEnd(src []byte) int {
-	const delimiter = "---\n"
-	if !bytes.HasPrefix(src, []byte(delimiter)) {
+	if !bytes.HasPrefix(src, []byte(frontmatterDelimiter)) {
 		return 0
 	}
-	closing := bytes.Index(src[len(delimiter):], []byte("\n"+delimiter))
+	closing := bytes.Index(src[len(frontmatterDelimiter):], []byte("\n"+frontmatterDelimiter))
 	if closing < 0 {
 		return 0
 	}
-	return len(delimiter) + closing + len("\n") + len(delimiter)
+	return len(frontmatterDelimiter) + closing + len("\n") + len(frontmatterDelimiter)
 }
 
 type offsetRenderer struct{}
@@ -118,6 +122,9 @@ func (r *offsetRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) 
 	reg.Register(ast.KindHTMLBlock, r.renderHTMLBlock)
 	reg.Register(ast.KindCodeBlock, r.renderCodeBlock)
 	reg.Register(ast.KindFencedCodeBlock, r.renderFencedCodeBlock)
+	reg.Register(ast.KindParagraph, r.renderParagraph)
+	reg.Register(ast.KindHeading, r.renderHeading)
+	reg.Register(ast.KindListItem, r.renderListItem)
 }
 
 func (r *offsetRenderer) renderText(
@@ -192,7 +199,9 @@ func (r *offsetRenderer) renderCodeBlock(
 		_, _ = w.WriteString("</code></pre>\n")
 		return ast.WalkContinue, nil
 	}
-	_, _ = w.WriteString("<pre><code>")
+	_, _ = w.WriteString("<pre")
+	writeBounds(w, node)
+	_, _ = w.WriteString("><code>")
 	writeLines(w, source, node)
 	return ast.WalkContinue, nil
 }
@@ -205,7 +214,9 @@ func (r *offsetRenderer) renderFencedCodeBlock(
 		return ast.WalkContinue, nil
 	}
 	n := node.(*ast.FencedCodeBlock)
-	_, _ = w.WriteString("<pre><code")
+	_, _ = w.WriteString("<pre")
+	writeBounds(w, n)
+	_, _ = w.WriteString("><code")
 	if language := n.Language(source); language != nil {
 		_, _ = w.WriteString(` class="language-`)
 		html.DefaultWriter.Write(w, language)
@@ -214,6 +225,79 @@ func (r *offsetRenderer) renderFencedCodeBlock(
 	_ = w.WriteByte('>')
 	writeLines(w, source, n)
 	return ast.WalkContinue, nil
+}
+
+// The three block renderers below reimplement goldmark's markup only to carry writeBounds:
+// its own renderers filter attributes through RenderAttributes, whose allowlist has no
+// data-* entry, so bounds set on the node would be dropped.
+
+func (r *offsetRenderer) renderParagraph(
+	w util.BufWriter, _ []byte, node ast.Node, entering bool,
+) (ast.WalkStatus, error) {
+	if !entering {
+		_, _ = w.WriteString("</p>\n")
+		return ast.WalkContinue, nil
+	}
+	_, _ = w.WriteString("<p")
+	writeBounds(w, node)
+	_ = w.WriteByte('>')
+	return ast.WalkContinue, nil
+}
+
+func (r *offsetRenderer) renderHeading(
+	w util.BufWriter, _ []byte, node ast.Node, entering bool,
+) (ast.WalkStatus, error) {
+	level := "0123456"[node.(*ast.Heading).Level]
+	if !entering {
+		_, _ = w.WriteString("</h")
+		_ = w.WriteByte(level)
+		_, _ = w.WriteString(">\n")
+		return ast.WalkContinue, nil
+	}
+	_, _ = w.WriteString("<h")
+	_ = w.WriteByte(level)
+	writeBounds(w, node)
+	_ = w.WriteByte('>')
+	return ast.WalkContinue, nil
+}
+
+// A list item has no lines of its own. In a tight list its text is a TextBlock child; in a
+// loose one it is a Paragraph, which carries bounds already, so the item is left plain
+// rather than nesting one editable range inside another.
+func (r *offsetRenderer) renderListItem(
+	w util.BufWriter, _ []byte, node ast.Node, entering bool,
+) (ast.WalkStatus, error) {
+	if !entering {
+		_, _ = w.WriteString("</li>\n")
+		return ast.WalkContinue, nil
+	}
+	first := node.FirstChild()
+	body, tight := first.(*ast.TextBlock)
+	_, _ = w.WriteString("<li")
+	if tight {
+		writeBounds(w, body)
+	}
+	_ = w.WriteByte('>')
+	// goldmark's newline rule: a block child starts on its own line, a TextBlock does not.
+	if first != nil && !tight {
+		_ = w.WriteByte('\n')
+	}
+	return ast.WalkContinue, nil
+}
+
+// writeBounds stamps the byte range an in-place edit may replace. Line segments start after
+// the block's own syntax — the "## ", the "- ", the fences — so an edit can change what a
+// block says but never what kind of block it is. No lines, no bounds, and so not editable.
+func writeBounds(w util.BufWriter, n ast.Node) {
+	lines := n.Lines()
+	if lines == nil || lines.Len() == 0 {
+		return
+	}
+	_, _ = w.WriteString(` data-os="`)
+	_, _ = w.WriteString(strconv.Itoa(lines.At(0).Start))
+	_, _ = w.WriteString(`" data-oe="`)
+	_, _ = w.WriteString(strconv.Itoa(lines.At(lines.Len() - 1).Stop))
+	_, _ = w.WriteString(`"`)
 }
 
 func writeLines(w util.BufWriter, source []byte, n ast.Node) {

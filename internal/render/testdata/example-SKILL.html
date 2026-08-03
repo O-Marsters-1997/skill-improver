@@ -1,30 +1,30 @@
-<div class="frontmatter"><pre><span data-o="0">---
+<div class="frontmatter" data-os="4" data-oe="117"><pre><span data-o="0">---
 name: example-skill
 description: A fixture that exercises every construct a real SKILL.md uses. Not a real skill.
 ---
 </span></pre></div>
-<h1><span data-o="125">Example Skill</span></h1>
-<p><span data-o="140">This fixture exists so the renderer is tested against the shapes that actually appear</span>
+<h1 data-os="125" data-oe="138"><span data-o="125">Example Skill</span></h1>
+<p data-os="140" data-oe="341"><span data-o="140">This fixture exists so the renderer is tested against the shapes that actually appear</span>
 <span data-o="226">in a SKILL.md: headings, </span><strong><span data-o="253">bold</span></strong><span data-o="259">, </span><em><span data-o="262">italic</span></em><span data-o="269">, </span><code><span data-o="272">inline code</span></code><span data-o="284">, fences, lists, tables and</span>
 <a href="https://example.com"><span data-o="313">links</span></a><span data-o="340">.</span></p>
-<h2><span data-o="346">When to use</span></h2>
-<p><span data-o="359">Use this when you need a document that is long enough to scroll and varied enough to</span>
+<h2 data-os="346" data-oe="357"><span data-o="346">When to use</span></h2>
+<p data-os="359" data-oe="595"><span data-o="359">Use this when you need a document that is long enough to scroll and varied enough to</span>
 <span data-o="444">break a naive parser. The paragraph above deliberately spans two source lines, because</span>
 <span data-o="531">soft line breaks are where offset arithmetic usually goes wrong.</span></p>
-<h2><span data-o="600">Process</span></h2>
+<h2 data-os="600" data-oe="607"><span data-o="600">Process</span></h2>
 <ol>
-<li><span data-o="612">Read the input in full.</span></li>
-<li><span data-o="639">Decide which of the branches below applies.</span></li>
-<li><span data-o="686">Report what you did — never claim a step you skipped.</span></li>
+<li data-os="612" data-oe="635"><span data-o="612">Read the input in full.</span></li>
+<li data-os="639" data-oe="682"><span data-o="639">Decide which of the branches below applies.</span></li>
+<li data-os="686" data-oe="741"><span data-o="686">Report what you did — never claim a step you skipped.</span></li>
 </ol>
-<h3><span data-o="747">Branches</span></h3>
+<h3 data-os="747" data-oe="755"><span data-o="747">Branches</span></h3>
 <ul>
-<li><strong><span data-o="761">Simple case</span></strong><span data-o="774"> — one file, one edit. Do it inline.</span></li>
-<li><strong><span data-o="817">Wide case</span></strong><span data-o="828"> — several files. List them first, then edit.</span></li>
-<li><strong><span data-o="880">Blocked</span></strong><span data-o="889"> — say so and stop. Do not guess.</span></li>
+<li data-os="759" data-oe="812"><strong><span data-o="761">Simple case</span></strong><span data-o="774"> — one file, one edit. Do it inline.</span></li>
+<li data-os="815" data-oe="875"><strong><span data-o="817">Wide case</span></strong><span data-o="828"> — several files. List them first, then edit.</span></li>
+<li data-os="878" data-oe="924"><strong><span data-o="880">Blocked</span></strong><span data-o="889"> — say so and stop. Do not guess.</span></li>
 </ul>
-<h2><span data-o="929">Example</span></h2>
-<pre><code class="language-go"><span data-o="944">func Handle(w http.ResponseWriter, r *http.Request) {
+<h2 data-os="929" data-oe="936"><span data-o="929">Example</span></h2>
+<pre data-os="944" data-oe="1157"><code class="language-go"><span data-o="944">func Handle(w http.ResponseWriter, r *http.Request) {
 </span><span data-o="998">    if r.Method != http.MethodPost {
 </span><span data-o="1035">        http.Error(w, &quot;method not allowed&quot;, http.StatusMethodNotAllowed)
 </span><span data-o="1108">        return
@@ -32,9 +32,9 @@ description: A fixture that exercises every construct a real SKILL.md uses. Not 
 </span><span data-o="1129">    fmt.Fprintln(w, &quot;ok&quot;)
 </span><span data-o="1155">}
 </span></code></pre>
-<p><span data-o="1162">The snippet above is deliberately inside a fence, so a highlight landing in it has to</span>
+<p data-os="1162" data-oe="1303"><span data-o="1162">The snippet above is deliberately inside a fence, so a highlight landing in it has to</span>
 <span data-o="1248">expand to the whole block rather than corrupt the code.</span></p>
-<h2><span data-o="1308">Reference</span></h2>
+<h2 data-os="1308" data-oe="1317"><span data-o="1308">Reference</span></h2>
 <table>
 <thead>
 <tr>
@@ -57,7 +57,7 @@ description: A fixture that exercises every construct a real SKILL.md uses. Not 
 </tbody>
 </table>
 <blockquote>
-<p><span data-o="1578">A blockquote, because SKILL.md files use them for warnings.</span></p>
+<p data-os="1578" data-oe="1637"><span data-o="1578">A blockquote, because SKILL.md files use them for warnings.</span></p>
 </blockquote>
-<p><span data-o="1639">Finally, a line with an escaped asterisk (\*), an ampersand (&amp;), and an em dash — all</span>
+<p data-os="1639" data-oe="1777"><span data-o="1639">Finally, a line with an escaped asterisk (\*), an ampersand (&amp;), and an em dash — all</span>
 <span data-o="1727">of which shift byte offsets if handled carelessly.</span></p>

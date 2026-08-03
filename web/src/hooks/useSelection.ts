@@ -1,5 +1,5 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
-import { edgeOffset, offsetAt } from "@/lib/offsets";
+import { blockAt, edgeOffset, offsetAt } from "@/lib/offsets";
 import { say } from "@/lib/notify";
 
 export interface PendingComment {
@@ -8,12 +8,20 @@ export interface PendingComment {
   quote: string;
 }
 
+// Captured with the selection rather than looked up on demand: by the time the menu is
+// clicked the selection may be gone.
+export interface PendingBlock {
+  start: number;
+  end: number;
+}
+
 // A selection only offers to become a comment — nothing opens until the floating menu's
 // action is chosen, so the document stays readable and selectable. `docRef` must point at
 // an always-mounted container (see Document.tsx): if it mounted only once a doc loaded,
 // these listeners would attach to nothing.
 export function useSelection(docRef: RefObject<HTMLElement | null>) {
   const [pending, setPending] = useState<PendingComment | null>(null);
+  const [block, setBlock] = useState<PendingBlock | null>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -21,6 +29,7 @@ export function useSelection(docRef: RefObject<HTMLElement | null>) {
   const closeComposer = useCallback(() => {
     setComposerOpen(false);
     setPending(null);
+    setBlock(null);
     setAnchorRect(null);
   }, []);
 
@@ -54,6 +63,7 @@ export function useSelection(docRef: RefObject<HTMLElement | null>) {
       }
 
       setPending({ start, end, quote });
+      setBlock(blockAt(range.startContainer));
       setAnchorRect(range.getBoundingClientRect());
     }
 
@@ -90,5 +100,5 @@ export function useSelection(docRef: RefObject<HTMLElement | null>) {
     };
   }, [docRef, composerOpen, closeComposer]);
 
-  return { pending, anchorRect, composerOpen, menuRef, openComposer, closeComposer };
+  return { pending, block, anchorRect, composerOpen, menuRef, openComposer, closeComposer };
 }

@@ -252,6 +252,135 @@ func TestAnchorRejectsImpossibleRange(t *testing.T) {
 	}
 }
 
+func TestEditWritesToDisk(t *testing.T) {
+	s, path := newTestServer(t)
+	start, end := offsetOf(t, fixture, "never push to a terminal")
+
+	d := decodeDoc(t, post(t, s, "/api/edit", editRequest{
+		Rev: getDoc(t, s).Rev, Start: start, End: end, Text: "never write to a terminal",
+	}))
+
+	if !strings.Contains(d.Src, "never write to a terminal") {
+		t.Errorf("the edit is missing from the source the page was handed:\n%s", d.Src)
+	}
+	if !strings.Contains(d.HTML, "never write to a terminal") {
+		t.Errorf("the edit is missing from the re-render:\n%s", d.HTML)
+	}
+	if got := string(mustRead(t, path)); !strings.Contains(got, "never write to a terminal") {
+		t.Errorf("the edit never reached the file:\n%s", got)
+	}
+}
+
+// An edit driven by the stamped bounds has to leave the syntax they sit inside alone.
+func TestEditKeepsTheBlockItsKind(t *testing.T) {
+	s, path := newTestServer(t)
+	src := getDoc(t, s).Src
+	start, end := offsetOf(t, src, "Example Skill")
+
+	post(t, s, "/api/edit", editRequest{Rev: getDoc(t, s).Rev, Start: start, End: end, Text: "Renamed"})
+
+	if got := string(mustRead(t, path)); !strings.Contains(got, "# Renamed\n") {
+		t.Errorf("the heading lost its level:\n%s", got)
+	}
+}
+
+func TestEditRejectsStaleRevision(t *testing.T) {
+	s, path := newTestServer(t)
+	start, end := offsetOf(t, fixture, "never push")
+	stale := getDoc(t, s).Rev
+
+	if err := os.WriteFile(path, []byte(fixture+"\nEdited elsewhere.\n"), 0o644); err != nil {
+		t.Fatalf("simulate an edit in the editor: %v", err)
+	}
+
+	w := post(t, s, "/api/edit", editRequest{Rev: stale, Start: start, End: end, Text: "never write"})
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d; want 409 so the page reloads instead of clobbering", w.Code)
+	}
+	if got := string(mustRead(t, path)); !strings.Contains(got, "Edited elsewhere.") {
+		t.Error("the external edit was overwritten")
+	}
+}
+
+// An edit may cross an anchor but not delete it: the thread would survive with a quote that
+// appears nowhere.
+func TestEditRefusesToOrphanAnAnchor(t *testing.T) {
+	s, path := newTestServer(t)
+	comment(t, s, "never push", "explain the failure mode")
+
+	d := getDoc(t, s)
+	start, _ := offsetOf(t, d.Src, "Comments autosave")
+	_, end := offsetOf(t, d.Src, "to a terminal.")
+	before := string(mustRead(t, path))
+
+	// The whole anchored paragraph, retyped without its markers — what a reviewer who
+	// selected the paragraph and rewrote it from scratch would send.
+	w := post(t, s, "/api/edit", editRequest{
+		Rev: d.Rev, Start: start, End: end, Text: "Comments autosave to disk; never push to a terminal.",
+	})
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d; want 422", w.Code)
+	}
+	if got := string(mustRead(t, path)); got != before {
+		t.Errorf("the refused edit was written anyway:\n%s", got)
+	}
+}
+
+func TestEditRefusesUneditableFiles(t *testing.T) {
+	t.Run("an output document is comment-only", func(t *testing.T) {
+		dir := t.TempDir()
+		skillDir := filepath.Join(dir, "skills", "ideate")
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(fixture), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		report := filepath.Join(dir, "report.md")
+		if err := os.WriteFile(report, []byte("# Report\n\nA claim that is wrong.\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		s, err := New(config.Default(), report, skillDir, filepath.Join(dir, "out"), "olly")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		d := getDoc(t, s)
+		if d.Editable {
+			t.Error("editable = true for a document the skill produced")
+		}
+		start, end := offsetOf(t, d.Src, "A claim that is wrong")
+		w := post(t, s, "/api/edit", editRequest{Rev: d.Rev, Start: start, End: end, Text: "A claim that is right"})
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d; want 400", w.Code)
+		}
+	})
+
+	t.Run("an html target is comment-only", func(t *testing.T) {
+		s, _ := newFileServer(t, config.Default(), "page.html", "<p>Some prose.</p>\n")
+
+		d := getDoc(t, s)
+		if d.Editable {
+			t.Error("editable = true for an HTML target, whose render is sanitised")
+		}
+		start, end := offsetOf(t, d.Src, "Some prose")
+		w := post(t, s, "/api/edit", editRequest{Rev: d.Rev, Start: start, End: end, Text: "Other prose"})
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d; want 400", w.Code)
+		}
+	})
+
+	t.Run("a skill's own instructions are editable", func(t *testing.T) {
+		s, _ := newTestServer(t)
+		if !getDoc(t, s).Editable {
+			t.Error("editable = false for the skill's own SKILL.md")
+		}
+	})
+}
+
 func TestThreadLifecycle(t *testing.T) {
 	s, _ := newTestServer(t)
 	start, end := offsetOf(t, fixture, "never push")
